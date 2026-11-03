@@ -259,6 +259,13 @@ One accident of the first run is worth noting: `gradlew` executed even though th
 `chmod +x` step was skipped, because the `100755` mode was committed to the index. The FAT32
 workaround below earned its keep on the first attempt.
 
+With both fixed, **run #3 passed every step in 5 minutes** — faster than the same four tasks
+take locally, where FAT32 and a Windows filesystem make the many-small-files phase slow. It
+produced three artifacts: `apks` (54.49 MB), `test-report` and `lint-report`. That APK
+artifact is the load-bearing evidence rather than the green tick: `if-no-files-found: ignore`
+means an empty glob uploads nothing at all, so a 54 MB artifact can only exist if both
+variants really were assembled.
+
 ### Details that are not obvious
 
 All of these were established by checking rather than guessing:
