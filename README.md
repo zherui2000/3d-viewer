@@ -303,17 +303,23 @@ edge behind the system bars, and the overlays that must clear them say so indivi
 suppressed at the declaration with that reasoning written next to it, rather than hidden in a
 lint baseline where the reason would be lost.
 
-Nine warnings remain and do not fail the build. They are known, not overlooked:
+As of `1.1.0-beta1` there are **no warnings either**, and `warningsAsErrors = true` keeps it
+that way. The nine that were outstanding went like this:
 
-| Warning | Standing |
+| Warning | Resolution |
 | --- | --- |
-| `OldTargetApi` (`targetSdk 35` under `compileSdk 37`) | deliberate — 37 is forced by Filament's AAR metadata, 35 is what the behaviour was tested against |
-| `GradleDependency` / `NewerVersionAvailable` ×3 | documentfile, kxml2, coroutines have newer releases |
-| `UnusedResources` ×2 | two leftover strings |
-| `DataExtractionRules`, `ObsoleteSdkInt`, `MonochromeLauncherIcon` | manifest and icon polish |
+| `UnusedResources` ×2 | the two leftover strings deleted |
+| `ObsoleteSdkInt` | `mipmap-anydpi-v26` → `mipmap-anydpi`; the qualifier is redundant at `minSdk 26` |
+| `MonochromeLauncherIcon` | `<monochrome>` layer added, so Android 13+ themed icons look right |
+| `DataExtractionRules` | `data_extraction_rules.xml` plus its pre-12 twin `backup_rules.xml` — lint insists on both once one exists |
+| `GradleDependency` / `NewerVersionAvailable` ×3 | documentfile 1.1.0, kxml2 2.3.0, coroutines 1.11.0 — then **disabled** |
+| `OldTargetApi` | **disabled**, deliberately |
 
-Turning `lint { warningsAsErrors = true }` on is the right move once that list is cleared; it
-would fail the build today.
+The disabled checks are a judgement, not an oversight. The version checks fire whenever
+somebody *else* publishes a release, so with `warningsAsErrors` on they would turn CI red on a
+day nobody touched the repository. `OldTargetApi` stays off because `targetSdk 35` is the level
+this app's windowing, insets and permissions were actually tested at; raising it is a change to
+verify on a device, not a lint fix. All four are named, with reasons, in `app/build.gradle.kts`.
 
 > Only `ci.yml` assumes GitHub. The four commands are plain Gradle, so moving to GitLab CI,
 > Jenkins or anything else means re-expressing the JDK, SDK and `chmod` setup — nothing in the
@@ -382,9 +388,22 @@ Several changes since that report may have addressed it, but none is confirmed a
 * The compiled material payload is copied into a *direct* `ByteBuffer` before being handed
   to Filament, which reads payloads through the JNI direct-buffer address.
 
-If it still exits silently on that device, suspect a native abort (`SIGABRT`/`SIGSEGV`)
-inside Filament — those bypass Kotlin error handling entirely, and only
-`adb logcat -b crash -d` will show them.
+**From `1.1.0-beta1` the app captures its own crashes**, which is the most useful thing it
+can do about this. `CrashLog` installs an uncaught-exception handler before Filament is
+touched, writes the trace to the app's storage on the way down — with the build, device,
+Android level and ABIs in the header — and shows it on the next launch in a dialog with a
+**Copy and dismiss** button. The handler chains to the system's afterwards, so the crash is
+still recorded normally rather than swallowed.
+
+Verified on the emulator end to end: `adb shell am crash com.inspect3d.viewer` produced a
+919-byte report, the process died properly, the next launch showed the dialog, dismissing it
+deleted the file, and a further relaunch was clean.
+
+**One limit, which matters for this particular bug:** that handler sees *Java/Kotlin*
+exceptions only. A native abort (`SIGABRT`/`SIGSEGV`) inside Filament kills the process
+without passing through it, so if the beta still closes on that phone **and no dialog appears
+afterwards**, that absence is itself the diagnosis: it points at the native layer. Then only
+`adb logcat -b crash -d` will show the cause.
 
 ### Rough edges
 

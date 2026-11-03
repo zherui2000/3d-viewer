@@ -1,6 +1,8 @@
 package com.inspect3d.viewer.ui
 
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.net.Uri
 import android.view.SurfaceView
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -21,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
@@ -30,6 +34,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -45,11 +50,14 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.inspect3d.viewer.core.CrashLog
 import com.inspect3d.viewer.model.ModelFormat
 import com.inspect3d.viewer.render.ViewerRenderer
 import com.inspect3d.viewer.viewmodel.InteractionMode
@@ -161,6 +169,20 @@ fun ViewerScreen(
             setSectionFlipped = viewModel::setSectionFlipped,
             setSectionPlaneVisible = viewModel::setSectionPlaneVisible,
             resetSection = viewModel::resetSection,
+        )
+    }
+
+    // If the previous run died, the trace was written on the way down. Show it once, on
+    // the next launch, rather than letting the app close silently and leave nothing to go
+    // on. Read once per composition tree, not on every recomposition.
+    var crashReport by remember { mutableStateOf(CrashLog.pending(context)) }
+    crashReport?.let { report ->
+        CrashReportDialog(
+            report = report,
+            onDismiss = {
+                CrashLog.clear(context)
+                crashReport = null
+            },
         )
     }
 
@@ -327,7 +349,79 @@ private fun EmptyState(modifier: Modifier = Modifier, onOpen: () -> Unit) {
             icon = { Icon(Icons.Rounded.FolderOpen, contentDescription = null) },
             text = { Text("Choose a file") },
         )
+        // Worth showing on a pre-release build: a bug report is close to useless without
+        // knowing which build produced it.
+        Text(
+            text = "v${CrashLog.versionName(LocalContext.current)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 20.dp),
+        )
     }
+}
+
+/**
+ * The stack trace from a crashed previous run.
+ *
+ * Deliberately a modal dialog rather than a snackbar: it is the only chance to hand over
+ * this information, and it is useless if it fades after four seconds. The text is
+ * monospaced, scrollable and copyable, because the point is to get it off the device and
+ * into a bug report.
+ */
+@Composable
+private fun CrashReportDialog(report: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                imageVector = Icons.Rounded.ErrorOutline,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+            )
+        },
+        title = { Text("The app closed unexpectedly") },
+        text = {
+            Column {
+                Text(
+                    text = "This is the error from last time. Copying it into a bug " +
+                        "report is the single most useful thing you can do with it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.size(12.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = MaterialTheme.shapes.small,
+                ) {
+                    Text(
+                        text = report,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier
+                            .heightIn(max = 280.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(10.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    // The platform clipboard rather than Compose's, which has been
+                    // through two API changes recently; this one does not move.
+                    context.getSystemService(ClipboardManager::class.java)
+                        ?.setPrimaryClip(ClipData.newPlainText("Inspect3D crash", report))
+                    onDismiss()
+                },
+            ) { Text("Copy and dismiss") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Dismiss") }
+        },
+    )
 }
 
 /**

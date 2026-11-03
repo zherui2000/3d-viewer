@@ -9,8 +9,8 @@ coreKtx = "1.19.1"
 lifecycle = "2.11.0"
 activityCompose = "1.13.0"
 composeBom = "2026.09.00"
-coroutines = "1.9.0"
-documentfile = "1.0.1"
+coroutines = "1.11.0"
+documentfile = "1.1.0"
 # Google Filament: 3D renderer + runtime material (shader) compiler.
 # filament-android and filamat-android MUST always use the same version.
 filament = "1.77.3"
@@ -32,7 +32,7 @@ androidx-compose-material-icons-extended = { group = "androidx.compose.material"
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 junit = { group = "junit", name = "junit", version = "4.13.2" }
 json = { group = "org.json", name = "json", version = "20260814" }
-kxml2 = { group = "net.sf.kxml", name = "kxml2", version = "2.2.2" }
+kxml2 = { group = "net.sf.kxml", name = "kxml2", version = "2.3.0" }
 filament-android = { group = "com.google.android.filament", name = "filament-android", version.ref = "filament" }
 filamat-android = { group = "com.google.android.filament", name = "filamat-android", version.ref = "filament" }
 

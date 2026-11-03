@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The pre-Android-12 counterpart to data_extraction_rules.xml. Both are declared because
+  android:allowBackup is deprecated: if it is ever removed, backup would default to on,
+  and these two files are what decides the behaviour instead of a silent change.
+
+  Empty on purpose. allowBackup="false" already disables backup and device transfer on
+  every API level this app supports, and there is nothing here worth restoring anyway:
+  models are read from the user's own storage through the Storage Access Framework and
+  never copied in, and the only file written is a crash trace.
+-->
+<full-backup-content>
+</full-backup-content>

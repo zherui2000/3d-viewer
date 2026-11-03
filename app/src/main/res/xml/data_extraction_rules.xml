@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12 replaced android:allowBackup with these rules. The app holds nothing worth
+  restoring: models are opened from the user's own storage through the Storage Access
+  Framework and never copied in, and the only file written is a crash trace. Excluding
+  everything keeps that consistent with allowBackup="false" on older releases, rather
+  than silently starting to back things up from API 31 onwards.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+    </device-transfer>
+</data-extraction-rules>

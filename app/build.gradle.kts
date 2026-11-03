@@ -15,8 +15,8 @@ android {
         // Filament performs best on API 26+, and adaptive launcher icons require it.
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1.0-beta1"
     }
 
     buildTypes {
@@ -48,6 +48,24 @@ android {
             // and maths under test are plain Kotlin, so this only guards the edges.
             isReturnDefaultValues = true
         }
+    }
+
+    lint {
+        // The warning list is empty as of this commit, so hold it there.
+        warningsAsErrors = true
+        disable += setOf(
+            // These three fire when somebody else publishes a release. A dependency being
+            // one version behind is a decision to make, not a defect, and letting it fail
+            // the build means CI turns red on a day nobody touched this repository.
+            "GradleDependency",
+            "NewerVersionAvailable",
+            "AndroidGradlePluginVersion",
+            // targetSdk 35 under compileSdk 37 is deliberate. 37 is forced by Filament's
+            // AAR metadata; 35 is the level this app's windowing, insets and permission
+            // behaviour was actually tested against. Raising it is a change to verify on a
+            // device, not a lint fix.
+            "OldTargetApi",
+        )
     }
 
     packaging {
