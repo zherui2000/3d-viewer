@@ -34,6 +34,8 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="model/*" />
+                <!-- STEP is registered as application/step as often as model/step. -->
+                <data android:mimeType="application/step" />
             </intent-filter>
         </activity>
     </application>

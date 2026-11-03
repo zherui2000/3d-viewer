@@ -6,6 +6,7 @@ enum class ModelFormat(val label: String, val extensions: List<String>) {
     OBJ("OBJ", listOf("obj")),
     THREE_MF("3MF", listOf("3mf")),
     GLTF("glTF", listOf("gltf", "glb")),
+    STEP("STEP", listOf("step", "stp")),
     ;
 
     companion object {
@@ -16,6 +17,9 @@ enum class ModelFormat(val label: String, val extensions: List<String>) {
             "model/3mf",
             "model/gltf+json",
             "model/gltf-binary",
+            "model/step",
+            "application/step",
+            "application/stp",
             "application/octet-stream",
             "application/sla",
             "text/plain",

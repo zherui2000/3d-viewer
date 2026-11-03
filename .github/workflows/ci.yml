@@ -23,11 +23,18 @@ jobs:
     # there forces Node 20 actions onto Node 24. A twenty-minute Android build is the
     # wrong place to absorb a surprise image change; bump this deliberately instead.
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # Generous because a cold run also builds OpenCASCADE for two ABIs. Once that is
+    # cached, a run takes minutes.
+    timeout-minutes: 150
 
     steps:
       - name: Check out
         uses: actions/checkout@v7
+
+      # Build tools and the Gradle cache together outgrow the runner's free disk once
+      # OpenCASCADE and two NDK builds are added; these preinstalled toolchains are unused.
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift
 
       # gradle-wrapper.jar is the one binary committed to this repository, so it is what
       # a supply-chain attack would aim at. This checks it against Gradle's published
@@ -49,8 +56,39 @@ jobs:
       # keeps CI compiling against the same components as a local build. Note the minor
       # version: API 37 introduced minor platform revisions, and "platforms;android-37"
       # does not resolve.
+      # The NDK and CMake build the STEP bridge and OpenCASCADE; their versions are pinned
+      # in app/build.gradle.kts and scripts/build-occt.sh, and must match both.
       - name: Install SDK components
-        run: sdkmanager --install "platforms;android-37.0" "build-tools;36.0.0"
+        run: >-
+          sdkmanager --install
+          "platforms;android-37.0" "build-tools;36.0.0"
+          "ndk;28.2.13676358" "cmake;3.31.6"
+
+      # OpenCASCADE takes far longer to build than the app itself, and only changes when
+      # its pins do. The build script holds every pin, so its hash is the cache key: any
+      # change to the version, commit, NDK, flags or ABIs invalidates the cache.
+      - name: Restore OpenCASCADE build
+        id: occt-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/occt-build/install
+          key: occt-${{ runner.os }}-${{ hashFiles('scripts/build-occt.sh') }}
+
+      - name: Build OpenCASCADE (cache miss only)
+        if: steps.occt-cache.outputs.cache-hit != 'true'
+        run: bash scripts/build-occt.sh
+
+      # Saved straight away rather than by the combined cache action, which only saves when
+      # the whole job succeeds: a failing unit test must not throw away an hour of compile.
+      - name: Save OpenCASCADE build
+        if: steps.occt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/occt-build/install
+          key: occt-${{ runner.os }}-${{ hashFiles('scripts/build-occt.sh') }}
+
+      - name: Point Gradle at OpenCASCADE
+        run: echo "OCCT_DIR=$HOME/occt-build/install/8.0.1" >> "$GITHUB_ENV"
 
       # Caches ~/.gradle (wrapper distributions, dependencies and the build cache) and
       # stops the daemon at the end of the job.

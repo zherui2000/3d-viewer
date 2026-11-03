@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     // No kotlin-android plugin: AGP 9 compiles Kotlin itself ("built-in Kotlin") and
@@ -5,18 +7,70 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// OpenCASCADE, built by scripts/build-occt.ps1 (or .sh in CI), provides STEP import. Its
+// location is machine-specific, so it comes from -Pocct.dir, then occt.dir in
+// local.properties, then OCCT_DIR. Deliberately not an error here when absent: unit tests
+// and lint do not need it, and the native build fails with a clear message if it is missing.
+val occtDir: String? = providers.gradleProperty("occt.dir").orNull
+    ?: rootProject.file("local.properties").takeIf { it.isFile }?.let { file ->
+        Properties().apply { file.inputStream().use { load(it) } }.getProperty("occt.dir")
+    }
+    ?: System.getenv("OCCT_DIR")
+
 android {
     namespace = "com.inspect3d.viewer"
     // Filament 1.77.3 requires consumers to compile against API 37 or later.
     compileSdk = 37
+    // The NDK AGP 9.5 defaults to, pinned so OpenCASCADE (built with the same one by
+    // scripts/build-occt) and the JNI bridge share one toolchain and one libc++_shared.so.
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "com.inspect3d.viewer"
         // Filament performs best on API 26+, and adaptive launcher icons require it.
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0-beta1"
+        versionCode = 3
+        versionName = "1.2.0-beta1"
+
+        // On-device tests: the STEP bridge is native and can only be exercised there.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            // 64-bit only. OpenCASCADE is built for these two, and shipping two more ABIs
+            // would roughly double the APK for 32-bit phones that have all but gone.
+            // x86_64 is for the emulator. Each ABI adds about 60 MB of native code, so a
+            // build for one phone can drop the other: -Pinspect3d.abis=arm64-v8a
+            abiFilters += providers.gradleProperty("inspect3d.abis").orNull
+                ?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }
+                ?: listOf("arm64-v8a", "x86_64")
+        }
+
+        externalNativeBuild {
+            cmake {
+                arguments += listOf(
+                    "-DOCCT_DIR=${occtDir.orEmpty().replace('\\', '/')}",
+                    // OpenCASCADE is built against the shared C++ runtime; the bridge must
+                    // use the same one, or the two would carry separate heaps and type info.
+                    "-DANDROID_STL=c++_shared",
+                )
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.31.6"
+        }
+    }
+
+    sourceSets {
+        getByName("main") {
+            // AGP packages the libraries a CMake target builds, but not ones it imports:
+            // OpenCASCADE's .so files reach the APK through jniLibs instead.
+            if (occtDir != null) jniLibs.directories.add("$occtDir/jniLibs")
+        }
     }
 
     buildTypes {
@@ -111,4 +165,7 @@ dependencies {
     testImplementation(libs.json)
     // An XmlPullParser implementation for the JVM, handed to ThreeMfParser by the tests.
     testImplementation(libs.kxml2)
+
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
 }

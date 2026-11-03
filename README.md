@@ -1,11 +1,13 @@
 # Inspect3D — local 3D model viewer with measurement and cross-sections
 
-A native Android viewer for engineering geometry: open an `.stl`, `.obj`, `.3mf`, `.gltf`
-or `.glb` file from device storage or a cloud drive, orbit it, measure point-to-point
-distances on the surface, and slice it with an arbitrary clipping plane to inspect the
-interior.
+A native Android viewer for engineering geometry: open a `.step`/`.stp`, `.stl`, `.obj`,
+`.3mf`, `.gltf` or `.glb` file from device storage or a cloud drive, orbit it, measure
+point-to-point distances on the surface, and slice it with an arbitrary clipping plane to
+inspect the interior. The scene is **Z-up**, with the XY plane as the ground, and an XYZ
+triad in the corner shows how the view is oriented.
 
-Kotlin · Jetpack Compose (Material 3) · MVVM + Coroutines/Flow · Google Filament 1.77.3
+Kotlin · Jetpack Compose (Material 3) · MVVM + Coroutines/Flow · Google Filament 1.77.3 ·
+OpenCASCADE 8.0.1 (STEP)
 
 ---
 
@@ -27,12 +29,33 @@ offline `matc` step and no checked-in shader blobs.
 
 ## Build
 
+STEP import is native: it needs OpenCASCADE built for Android once per machine. It takes
+roughly twenty to forty minutes per ABI and is then reused:
+
+```bash
+android sdk install ndk/28.2.13676358 cmake/3.31.6
+```
+
+```bash
+pwsh scripts/build-occt.ps1
+```
+
+(`bash scripts/build-occt.sh` on Linux or macOS.) Then point Gradle at the result in
+`local.properties`, which the script prints for you:
+
+```properties
+occt.dir=C:/Users/you/occt-build/install/8.0.1
+```
+
+After that it is the usual:
+
 ```bash
 ./gradlew assembleDebug
 ```
 
-The wrapper is checked in, so that is the whole story. Or open the folder in Android
-Studio and run.
+Without `occt.dir`, unit tests and lint still run. Only the native build stops, with a
+message saying what is missing. `-Pocct.dir=…` or an `OCCT_DIR` environment variable work
+too, and the latter is how CI passes it.
 
 Toolchain, as actually built: **JDK 17** (Temurin 17.0.20.1), **Gradle 9.8.2**, **AGP
 9.5.0**, **Kotlin 2.4.21**, **compileSdk 37**, `minSdk 26`, Compose BOM 2026.09.00. A
@@ -112,6 +135,96 @@ square the size of the plate's diagonal. The fill fades out towards the border a
 rim marks the extent, so the indicator reads as a plane rather than a wall across the
 viewport.
 
+The default cut is the **XY plane** through the model's centre: a horizontal slice
+removing the upper half, as a slicer or a floor plan would take. Azimuth turns the normal
+about Z, starting at +X and moving towards +Y; elevation tilts it towards +Z.
+
+## Orientation: Z-up
+
+The scene is Z-up. The ground grid is the XY plane, the camera's yaw turns about +Z, and
+yaw 0 is the front view, looking along +Y with +X to the right. That is the convention of
+the CAD tools that write STL, 3MF and STEP, so those files are shown exactly as authored.
+Under the earlier Y-up scene they appeared lying on their backs.
+
+**glTF is the exception.** Its specification mandates +Y up, so `GltfParser` turns every
+scene +90° about X as it is read, `(x, y, z) → (x, −z, y)`, which is what Blender does on
+import. It is a proper rotation, so triangle winding survives (a unit test checks the
+determinant). The consequence worth knowing is that a glTF model's reported dimensions and
+measured deltas are in the viewer's axes, so its height is Z.
+
+The grid rests under each model's base rather than at a fixed depth, so a flat part sits
+on it the way it would on a build plate.
+
+The **XYZ triad** in the bottom-left corner (X red, Y green, Z blue) projects each world
+axis through the camera's own right, up and forward vectors. Those are the same ones the
+renderer and the picker use, so the triad cannot disagree with the view. Axes pointing away
+from the viewer are drawn first and dimmed.
+
+## Display modes
+
+| Mode | What it shows |
+| --- | --- |
+| Solid | the lit, physically based material, with metallic and roughness sliders |
+| **Shaded** | eDrawings-style: evenly lit, no face in shadow |
+| **Shaded with edges** | the same, with the part's edges outlined in black (eDrawings' default) |
+| Wireframe | every triangle edge, no surface |
+| Solid + mesh | the lit surface with every triangle edge, to show how the file was tessellated |
+
+"Shaded" is a dedicated unlit material: a headlight over strong ambient,
+`colour × (0.62 + 0.38 × |n·v|)`. Light always comes from the viewer's side, so no face can
+turn away from it into shadow, yet the brightness still varies with the angle to the eye,
+enough for curvature and steps to read. It is a material of its own rather than a
+re-rigged light setup so the look cannot drift with light intensities, exposure or the
+metallic slider.
+
+The **edges** in "Shaded with edges" are *feature* edges (`FeatureEdges.kt`):
+
+* creases where adjacent faces meet at more than 30°;
+* open boundaries.
+
+Vertices are welded by position first, since STL stores every triangle separately and
+nothing would share an edge otherwise. The result is the drawing-like outline a CAD viewer
+shows. A tessellated cylinder's facets meet at a few degrees and stay unmarked; its rim
+against a flat cap is a 90° crease and is outlined. Extraction runs on the loading thread
+in two flat hash tables and stops above 750 k triangles. The model's faces carry a small
+depth bias, so lines lying exactly on them draw cleanly instead of flickering.
+
+## How STEP import works
+
+STEP is unlike every other format here: it stores exact CAD geometry, meaning planes,
+cylinders and NURBS patches trimmed by curves, not triangles. It has to be *tessellated*
+before it can be drawn. That is the job of **OpenCASCADE** (8.0.1, pinned by commit),
+called through a small JNI bridge (`app/src/main/cpp/step_bridge.cpp`):
+
+1. `STEPControl_Reader::ReadStream` parses the bytes Kotlin already holds, with no temp
+   file. Geometry is requested in millimetres, whatever unit the file was authored in.
+2. `BRepMesh_IncrementalMesh` tessellates the shape in parallel. The chordal deflection is
+   0.08 % of the bounding-box diagonal and the angular deflection about 17°: fine enough
+   that a bore reads as round, coarse enough not to exhaust a phone on an assembly.
+3. Each face's triangulation is flattened into the same positions, normals and indices
+   arrays the Kotlin parsers produce. From there a STEP part is handled exactly like an
+   STL: normalisation, BVH, measurement, section, feature edges.
+
+Normals come from the exact surface, not from averaged facets, so curved faces shade
+smoothly. One trap is handled explicitly. OpenCASCADE computes those normals from each
+surface's own parametrisation, which knows nothing of the face's orientation in the solid.
+A face marked `REVERSED` therefore has its normals negated and its winding flipped, and a
+mirroring placement flips the winding once more. Without that, half the faces of a typical
+part would render inside out.
+
+The bridge catches every C++ exception before it can reach the JVM, where it would abort
+the process. Failures come back as a message the app shows like any other parse error.
+
+**What it costs.** STEP support needs 23 OpenCASCADE libraries, about 46 MB per ABI. The
+app therefore ships **arm64-v8a and x86_64 only**: 64-bit phones, plus the emulator. 32-bit
+ARM devices are no longer supported.
+
+**Licensing.** OpenCASCADE is LGPL 2.1 with an additional exception. It is linked
+*dynamically*, as separate `.so` files, which is the arrangement the LGPL is designed
+around. Users can replace those libraries, so no further obligations arise beyond shipping
+the licence and offering OpenCASCADE's source. If you distribute the app, include
+`LICENSE_LGPL_21.txt` and `OCCT_LGPL_EXCEPTION.txt` from the OpenCASCADE source tree.
+
 ## How measurement works
 
 1. A tap gives a pixel. `CameraState.rayThrough` turns it into a world-space ray using the
@@ -144,7 +257,8 @@ detectors, which is what avoids tap and transform detectors eating each other's 
 | STL | binary and ASCII, facet normals, winding fallback | — |
 | OBJ | `v`/`vn`/`f`, all corner forms, negative indices, n-gons | `.mtl` materials, textures |
 | 3MF | mesh objects, components, build items, transforms, document unit | materials, beam lattice, slices |
-| glTF 2.0 | `.glb` and `.gltf` with embedded buffers, scene graph transforms, `POSITION`/`NORMAL`, quantized accessors | external `.bin`, Draco, sparse accessors, animation, skinning, PBR textures |
+| glTF 2.0 | `.glb` and `.gltf` with embedded buffers, scene graph transforms, `POSITION`/`NORMAL`, quantized accessors; turned from Y-up to Z-up | external `.bin`, Draco, sparse accessors, animation, skinning, PBR textures |
+| STEP | AP203, AP214, AP242 B-rep (solids, shells, surfaces, assemblies with placements), tessellated by OpenCASCADE in millimetres | colours, PMI, product structure names, wireframe-only geometry |
 
 Other deliberate limits:
 
@@ -170,20 +284,35 @@ default GL backend; add `VULKAN` if you switch the engine's backend.
 ./gradlew test
 ```
 
-66 JVM unit tests — no device or emulator, a couple of seconds to run. They cover the two
-parts where a sign error produces plausible-looking output rather than a crash: the
-parsers and the picking maths.
+80 JVM unit tests, which need no device or emulator and take seconds to run. They cover
+the parts where a sign error produces plausible-looking output rather than a crash: the
+parsers, the picking maths and the axis conventions.
 
 | Suite | Tests | What it pins down |
 | --- | --- | --- |
+| `CameraStateTest` | 12 | screen↔world round trip, orthographic rays, clamps, aspect-aware fit, **Z-up**: front view, orbit about Z |
+| `GltfParserTest` | 11 | GLB chunks, embedded base64, node transforms, Draco and external-buffer rejection, **Y-up → Z-up** turn and its determinant |
 | `BvhTest` | 10 | ray/mesh intersection, including a **differential test** against a brute-force scan |
 | `ObjParserTest` | 10 | quad fans, negative indices, partial normal sets, bad references |
 | `StlParserTest` | 9 | binary/ASCII equivalence, the `solid`-prefixed binary trap, zero facet normals |
-| `GltfParserTest` | 9 | GLB chunks, embedded base64, node transforms, Draco and external-buffer rejection |
-| `CameraStateTest` | 9 | screen↔world round trip, orthographic rays, clamps, aspect-aware fit |
 | `LoadedModelTest` | 7 | normalisation, unit round-trip, flat-shading expansion |
 | `ThreeMfParserTest` | 7 | the row-major transform convention, units, malformed packages |
+| `FeatureEdgesTest` | 5 | a box outlined by 12 edges, never its face diagonals; curved facets unmarked; the 30° crease threshold; welding a triangle soup |
 | `TangentFrameTest` | 5 | the quaternion encoding against its own inverse |
+| `SectionStateTest` | 4 | the XY-plane default, azimuth about Z, which half the plane equation removes |
+
+STEP import is native, so it is tested **on a device** instead:
+
+```bash
+./gradlew connectedDebugAndroidTest -Pinspect3d.abis=x86_64
+```
+
+`StepParserInstrumentedTest` (4 tests) runs the real OpenCASCADE bridge on a hand-written
+AP214 cylinder. It checks the true size in millimetres, and that every triangle faces
+outward and agrees with its normals, including the bottom cap, which the file declares as a
+*reversed* face. It also checks that only the rims are outlined, and that a damaged file
+comes back as a message rather than a crash. All four pass on the API 36 emulator. CI does
+not run them, since that would need an emulator on the runner.
 
 Two of these earn their keep more than the rest:
 
@@ -327,9 +456,24 @@ verify on a device, not a lint fix. All four are named, with reasons, in `app/bu
 
 ## Status
 
-**Compiles clean and produces an APK** — `app/build/outputs/apk/debug/app-debug.apk`,
-about 63 MB (debug, with Filament's and filamat's native libraries for every ABI). No
-compiler warnings or errors.
+**Compiles clean and produces an APK**, at `app/build/outputs/apk/debug/app-debug.apk`.
+Since STEP support, native code dominates its size: about 60 MB per ABI, of which
+OpenCASCADE is 46. A universal debug build (arm64 + x86_64) is about 139 MB, and a
+single-ABI build for one phone (`-Pinspect3d.abis=arm64-v8a`) is roughly half that.
+
+### 1.2.0-beta1, verified on the emulator
+
+| Checked | Result |
+| --- | --- |
+| Z-up | STL box lies flat: 100 along X, 60 along Y, 40 tall, resting on the grid |
+| glTF turn | the glTF box reads `2.000 × 0.500 × 1.000 m`, upright, its 1 m height now along Z |
+| Axis triad | Z points up, and X and Y match the box's own edges as the view orbits |
+| Shaded with edges | even lighting with no dark side; the box's 12 edges are outlined and none of its face diagonals are |
+| Section default | cuts horizontally, the XY plane through the centre |
+| STEP | `cylinder.step` reads `STEP · 216 triangles · 19.98 × 19.99 × 30.00 mm`, upright and smooth-shaded; in Shaded with edges only the rims are outlined |
+| STEP, on device | `StepParserInstrumentedTest`: 4 of 4 pass |
+
+### 1.0, first build
 
 Exactly two code problems surfaced on the first real compile, both API-naming mistakes
 rather than logic: Filament's method is `Scene.remove(entity)`, not `removeEntity`, and

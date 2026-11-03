@@ -52,6 +52,7 @@ class ModelRepository(
                 ModelFormat.OBJ -> ObjParser.parse(bytes)
                 ModelFormat.THREE_MF -> ThreeMfParser.parse(bytes)
                 ModelFormat.GLTF -> GltfParser.parse(bytes)
+                ModelFormat.STEP -> StepParser.parse(bytes)
             }
         } catch (e: ModelParseException) {
             throw e
@@ -121,6 +122,8 @@ class ModelRepository(
         val head = String(bytes, 0, minOf(512, bytes.size), Charsets.US_ASCII)
         val trimmed = head.trimStart()
         return when {
+            // Every ISO 10303-21 exchange file opens with this exact line.
+            trimmed.startsWith("ISO-10303-21") -> ModelFormat.STEP
             trimmed.startsWith("{") -> ModelFormat.GLTF
             trimmed.startsWith("solid", ignoreCase = true) -> ModelFormat.STL
             Regex("(?m)^\\s*(v|vn|vt|f)\\s").containsMatchIn(head) -> ModelFormat.OBJ
