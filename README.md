@@ -208,16 +208,16 @@ platform's.
 
 ## Continuous integration
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) — one job on `ubuntu-latest`, run on
-every push to `main`/`master`, on every pull request, and on demand. Four checks, each its
-own step so the log names the one that broke:
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) — one job on `ubuntu-24.04`, run on
+every push to `main`/`master`, on every pull request, and on demand. Four checks, in a single
+Gradle invocation with `--continue`:
 
-| Step | Command | Why it is there |
-| --- | --- | --- |
-| Unit tests | `./gradlew test` | the 66 tests above — seconds, no device |
-| Android Lint | `./gradlew lint` | fails on lint **errors**; warnings are reported, not fatal |
-| Debug APK | `./gradlew assembleDebug` | what you install to try it |
-| Release APK | `./gradlew assembleRelease` | the only variant that runs R8 |
+| Check | Why it is there |
+| --- | --- |
+| `test` | the 66 tests above — seconds, no device |
+| `lint` | fails on lint **errors**; warnings are reported, not fatal |
+| `assembleDebug` | what you install to try it |
+| `assembleRelease` | the only variant that runs R8 |
 
 To run exactly what CI runs, before pushing:
 
@@ -233,11 +233,35 @@ and none belongs in CI. It does work: shrinking takes the APK from **63.22 MB** 
 **46.25 MB** release, with `proguard-rules.pro`'s `-keep class com.google.android.filament.**`
 holding the JNI surface intact.
 
-The later steps are guarded with `if: ${{ !cancelled() }}` rather than left to fail fast, so a
-single red run reports everything it can find instead of only the first problem.
+### What the first run taught us
 
-Three details in that workflow are not obvious, and all three were established by checking
-rather than guessing:
+Run #1 failed, and the way it failed is worth keeping on record.
+
+**Every action version was stale.** The workflow was first written pinning `checkout@v4`,
+`setup-java@v4`, `upload-artifact@v4`, `gradle/actions@v4` and `setup-android@v3` — all from
+memory rather than checked. The current majors are **v7, v6, v7, v6 and v4**. `ubuntu-latest`
+had just begun migrating to Ubuntu 26 (19 October 2026), where the runner forces Node 20
+actions onto Node 24, and `setup-android@v3` died there. Hence the pinned `ubuntu-24.04`:
+an image change should be a deliberate commit, not something that happens mid-build.
+
+**The `!cancelled()` guards were actively harmful.** Each check originally had its own step
+guarded with `if: ${{ !cancelled() }}`, the intent being that one red run should report every
+problem rather than stopping at the first. What actually happened: SDK setup failed, the steps
+that depend on it were skipped — and the three build steps ran anyway and reported
+**success**, in under four minutes, without an SDK and without having built anything. A green
+step that proves nothing is worse than a red one. The checks now run as a single
+`./gradlew test lint assembleDebug assembleRelease --continue`, which reports every failing
+task the same way but cannot run at all unless setup succeeded. `!cancelled()` is still used
+on the artifact uploads, where it is correct — those collect reports precisely when the build
+has failed.
+
+One accident of the first run is worth noting: `gradlew` executed even though the
+`chmod +x` step was skipped, because the `100755` mode was committed to the index. The FAT32
+workaround below earned its keep on the first attempt.
+
+### Details that are not obvious
+
+All of these were established by checking rather than guessing:
 
 * **AGP does not download missing SDK components**, so the workflow installs them by hand. The
   versions are the ones AGP 9.5.0 resolves by default for this project — `build-tools;36.0.0`

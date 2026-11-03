@@ -18,70 +18,66 @@ permissions:
 jobs:
   build:
     name: Test, lint and assemble
-    runs-on: ubuntu-latest
+    # Pinned rather than ubuntu-latest. That label began migrating to Ubuntu 26 on
+    # 2026-10-19, this workflow's first run landed on the new image, and the runner
+    # there forces Node 20 actions onto Node 24. A twenty-minute Android build is the
+    # wrong place to absorb a surprise image change; bump this deliberately instead.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
 
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # gradle-wrapper.jar is the one binary committed to this repository, so it is what
       # a supply-chain attack would aim at. This checks it against Gradle's published
       # checksums before any Gradle code is allowed to execute.
       - name: Validate the Gradle wrapper
-        uses: gradle/actions/wrapper-validation@v4
+        uses: gradle/actions/wrapper-validation@v6
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up the Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       # AGP does not download missing SDK components, so they are installed explicitly.
       # These are the versions AGP 9.5.0 resolves by default for this project, which
-      # keeps CI compiling against the same components as a local build. If this step
-      # ever fails to find a package, the runner's cmdline-tools is too old to see it —
-      # pin a newer one with setup-android's `cmdline-tools-version` input.
+      # keeps CI compiling against the same components as a local build. Note the minor
+      # version: API 37 introduced minor platform revisions, and "platforms;android-37"
+      # does not resolve.
       - name: Install SDK components
         run: sdkmanager --install "platforms;android-37.0" "build-tools;36.0.0"
 
       # Caches ~/.gradle (wrapper distributions, dependencies and the build cache) and
       # stops the daemon at the end of the job.
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
-      # A checkout made on Windows does not carry the executable bit.
+      # The mode is committed as 100755, so this is belt and braces. It is worth keeping:
+      # the working tree this was authored in is FAT32 and cannot record an executable
+      # bit, so that mode lives in the git index alone.
       - name: Make the wrapper executable
         run: chmod +x ./gradlew
 
-      # Each check is its own step so the log says plainly which one failed, and
-      # `!cancelled()` lets the later steps still run after an earlier failure — one
-      # red run should report every problem it can find, not just the first.
-      - name: Unit tests
-        run: ./gradlew test
+      # One invocation, not four separately guarded steps. The first version of this
+      # workflow gave each check its own step with `if: !cancelled()`, so that a single
+      # red run would report every problem rather than stopping at the first. The effect
+      # was the opposite of the intent: when SDK setup failed, these steps ran anyway and
+      # reported *success* without having built anything, which is worse than a plain
+      # failure. `--continue` gets the same report-everything behaviour from Gradle,
+      # while this step cannot run at all unless every setup step above succeeded.
+      - name: Test, lint and assemble
+        run: ./gradlew test lint assembleDebug assembleRelease --continue
 
-      - name: Android Lint
-        if: ${{ !cancelled() }}
-        run: ./gradlew lint
-
-      - name: Assemble debug APK
-        if: ${{ !cancelled() }}
-        run: ./gradlew assembleDebug
-
-      # The release variant is built because it is the only one that runs R8. Filament
-      # is driven through JNI, so a missing keep rule does not show up until something
-      # is shrunk — and then only at runtime. The APK is unsigned; no keystore is
-      # needed, and none belongs in CI.
-      - name: Assemble release APK (unsigned, R8 enabled)
-        if: ${{ !cancelled() }}
-        run: ./gradlew assembleRelease
-
+      # `!cancelled()` is right here: these collect whatever reports exist, and are most
+      # useful precisely when the build above failed.
       - name: Upload test report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-report
           path: |
@@ -91,15 +87,19 @@ jobs:
 
       - name: Upload lint report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lint-report
           path: app/build/reports/lint-results-*.html
           if-no-files-found: ignore
 
+      # assembleRelease above is the only variant that runs R8. Filament is driven
+      # through JNI, so a missing keep rule does not show up until something is shrunk,
+      # and then only at runtime. Both APKs are unsigned; no keystore is needed, and
+      # none belongs in CI.
       - name: Upload APKs
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: apks
           path: app/build/outputs/apk/**/*.apk
