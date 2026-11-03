@@ -246,8 +246,16 @@ rather than guessing:
   too old to see it; pin a newer one via `setup-android`'s `cmdline-tools-version`.
 * **The platform package is `platforms;android-37.0`, not `platforms;android-37`.** API 37
   introduced minor platform revisions, and the older spelling does not resolve.
-* **`chmod +x ./gradlew`** is needed because this project was authored on Windows, where a
-  checkout carries no executable bit.
+* **`chmod +x ./gradlew`** is a safety net, not the mechanism. The mode is committed as
+  `100755`, set with `git update-index --chmod=+x gradlew`, because this working tree lives
+  on **FAT32** — which cannot record an executable bit at all, so `core.filemode` is `false`
+  here and git would never pick the mode up from the file itself.
+
+[`.gitattributes`](.gitattributes) exists for the same class of reason. Git for Windows
+installs with `core.autocrlf=true`, and a CR at the end of `#!/bin/sh` makes Linux search for
+an interpreter named `/bin/sh\r` and fail with a message that never mentions line endings, so
+`gradlew` is pinned to `eol=lf`. `*.jar` is marked binary because the wrapper-validation step
+checksums `gradle-wrapper.jar` and any normalisation would fail it.
 
 `gradle/actions/setup-gradle` caches `~/.gradle`, so dependencies, the Gradle distribution and
 the build cache survive between runs. `gradle/actions/wrapper-validation` runs before any
