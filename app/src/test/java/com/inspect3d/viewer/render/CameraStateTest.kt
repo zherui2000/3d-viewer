@@ -12,6 +12,35 @@ class CameraStateTest {
     private val height = 2400
 
     @Test
+    fun `the world is Z-up`() {
+        val camera = CameraState()
+
+        assertEquals(1f, CameraState.WORLD_UP.z, 0f)
+        assertTrue("the default view looks down onto the XY plane", camera.eye.z > camera.target.z)
+        assertTrue("+Z points up the screen", camera.up.z > 0.5f)
+        assertEquals("screen-right stays horizontal", 0f, camera.right.z, 1e-5f)
+    }
+
+    @Test
+    fun `yaw 0 and pitch 0 is the front view, looking along +Y with +X to the right`() {
+        val front = CameraState(yawDegrees = 0f, pitchDegrees = 0f)
+
+        assertEquals(1f, front.forward.y, 1e-5f)
+        assertEquals(1f, front.right.x, 1e-5f)
+        assertEquals(1f, front.up.z, 1e-5f)
+    }
+
+    @Test
+    fun `orbiting turns about the Z axis and leaves the height alone`() {
+        val before = CameraState(yawDegrees = 10f, pitchDegrees = 25f)
+        val after = before.orbit(dxPixels = 200f, dyPixels = 0f)
+
+        assertEquals("a horizontal drag must not change the eye height", before.eye.z, after.eye.z, 1e-4f)
+        val horizontal = { v: Vec3 -> kotlin.math.sqrt(v.x * v.x + v.y * v.y) }
+        assertEquals("nor its distance from the Z axis", horizontal(before.eye), horizontal(after.eye), 1e-4f)
+    }
+
+    @Test
     fun `the ray through the centre pixel is the view direction`() {
         val camera = CameraState()
 

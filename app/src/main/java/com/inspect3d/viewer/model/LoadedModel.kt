@@ -36,6 +36,11 @@ class LoadedModel(
     val worldPerSourceUnit: Float,
     val bvh: Bvh,
     val objectCount: Int,
+    /**
+     * Crease and boundary edges as a line list into [positions], for "Shaded with edges".
+     * `null` when the mesh is above [FeatureEdges.MAX_TRIANGLES].
+     */
+    val featureEdges: IntArray? = null,
 ) {
     val triangleCount: Int get() = indices.size / 3
     val vertexCount: Int get() = positions.size / 3
@@ -112,6 +117,10 @@ class LoadedModel(
                 worldPerSourceUnit = scale,
                 bvh = Bvh.build(normalized, indices),
                 objectCount = raw.objectCount,
+                // Computed here, off the main thread, alongside the BVH. Done eagerly so
+                // switching display mode is instant: it is linear in the triangle count,
+                // tens of milliseconds for a typical part.
+                featureEdges = FeatureEdges.compute(normalized, indices),
             )
         }
 
@@ -153,7 +162,7 @@ class LoadedModel(
                     nx /= len; ny /= len; nz /= len
                 } else {
                     // Degenerate triangle: any unit normal keeps the shader well defined.
-                    nx = 0f; ny = 1f; nz = 0f
+                    nx = 0f; ny = 0f; nz = 1f
                 }
                 for (v in 0 until 3) {
                     normals[o + v * 3] = nx

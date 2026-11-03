@@ -73,6 +73,24 @@ object GeometryFactory {
         return buffer
     }
 
+    /**
+     * Uploads a line list (pairs of vertex indices) as an index buffer over the model's own
+     * vertex buffer. Used for the feature edges, which are computed off the render thread.
+     */
+    fun buildLineIndices(engine: Engine, lines: IntArray): IndexBuffer {
+        val data = ByteBuffer
+            .allocateDirect(lines.size * 4)
+            .order(ByteOrder.nativeOrder())
+        data.asIntBuffer().put(lines)
+
+        val buffer = IndexBuffer.Builder()
+            .indexCount(lines.size)
+            .bufferType(IndexBuffer.Builder.IndexType.UINT)
+            .build(engine)
+        buffer.setBuffer(engine, data)
+        return buffer
+    }
+
     /** Unit-radius sphere, used for the measurement markers. */
     fun buildSphere(engine: Engine, rings: Int = 12, sectors: Int = 20): MeshBuffers {
         val positions = ArrayList<Float>((rings + 1) * (sectors + 1) * 3)
@@ -122,11 +140,12 @@ object GeometryFactory {
     }
 
     /**
-     * Ground grid drawn with `LINES`, spanning [-extent, extent] in X and Z at height [y].
-     * The model is normalised so its largest half-extent is 1, which makes a fixed grid
-     * size meaningful for every file.
+     * Ground grid drawn with `LINES`: the XY plane at z = 0, spanning [-extent, extent] in
+     * X and Y. The renderer lowers it to the base of whatever model is loaded. The model is
+     * normalised so its largest half-extent is 1, which makes a fixed grid size meaningful
+     * for every file.
      */
-    fun buildGrid(engine: Engine, extent: Float = 2f, divisions: Int = 20, y: Float = -1.001f): MeshBuffers {
+    fun buildGrid(engine: Engine, extent: Float = 2f, divisions: Int = 20): MeshBuffers {
         val lineCount = (divisions + 1) * 2
         val positions = FloatArray(lineCount * 2 * 3)
         val normals = FloatArray(lineCount * 2 * 3)
@@ -136,17 +155,17 @@ object GeometryFactory {
         val step = extent * 2f / divisions
         for (i in 0..divisions) {
             val offset = -extent + step * i
-            // Line along Z
-            positions[p] = offset; positions[p + 1] = y; positions[p + 2] = -extent
-            positions[p + 3] = offset; positions[p + 4] = y; positions[p + 5] = extent
+            // Line along Y
+            positions[p] = offset; positions[p + 1] = -extent; positions[p + 2] = 0f
+            positions[p + 3] = offset; positions[p + 4] = extent; positions[p + 5] = 0f
             p += 6
             // Line along X
-            positions[p] = -extent; positions[p + 1] = y; positions[p + 2] = offset
-            positions[p + 3] = extent; positions[p + 4] = y; positions[p + 5] = offset
+            positions[p] = -extent; positions[p + 1] = offset; positions[p + 2] = 0f
+            positions[p + 3] = extent; positions[p + 4] = offset; positions[p + 5] = 0f
             p += 6
         }
         for (i in normals.indices step 3) {
-            normals[i] = 0f; normals[i + 1] = 1f; normals[i + 2] = 0f
+            normals[i] = 0f; normals[i + 1] = 0f; normals[i + 2] = 1f
         }
 
         return build(engine, positions, normals, indices)

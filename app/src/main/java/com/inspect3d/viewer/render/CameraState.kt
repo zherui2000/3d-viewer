@@ -24,6 +24,10 @@ data class Ray(val origin: Vec3, val direction: Vec3)
  *
  * The loaded model is always normalised so its largest half-extent is one world unit, so
  * these distances are meaningful for any file, in any unit.
+ *
+ * The world is **Z-up**: the ground grid is the XY plane and yaw turns about +Z, which is
+ * the convention of the CAD tools that write STL and 3MF. Yaw 0 looks along +Y from the
+ * front, with +X to the right.
  */
 data class CameraState(
     val yawDegrees: Float = -40f,
@@ -49,7 +53,7 @@ data class CameraState(
     val eye: Vec3
         get() {
             val cp = cos(pitchRadians)
-            return target + Vec3(cp * sin(yawRadians), sin(pitchRadians), cp * cos(yawRadians)) * eyeDistance
+            return target + Vec3(cp * sin(yawRadians), -cp * cos(yawRadians), sin(pitchRadians)) * eyeDistance
         }
 
     val forward: Vec3 get() = (target - eye).normalized()
@@ -132,7 +136,7 @@ data class CameraState(
     }
 
     companion object {
-        val WORLD_UP = Vec3(0f, 1f, 0f)
+        val WORLD_UP = Vec3(0f, 0f, 1f)
 
         const val DEFAULT_DISTANCE = 3.4f
         const val MIN_DISTANCE = 0.2f

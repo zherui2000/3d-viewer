@@ -20,6 +20,7 @@ import com.google.android.filament.android.DisplayHelper
 import com.google.android.filament.android.UiHelper
 import com.inspect3d.viewer.core.Mat4
 import com.inspect3d.viewer.core.Vec3
+import com.inspect3d.viewer.model.FeatureEdges
 import com.inspect3d.viewer.model.LoadedModel
 import com.inspect3d.viewer.viewmodel.AppearanceState
 import com.inspect3d.viewer.viewmodel.SectionState
@@ -74,7 +75,9 @@ class ViewerRenderer(context: Context) {
 
     private val materials: ViewerMaterials?
     private var modelMaterial: MaterialInstance? = null
+    private var evenMaterial: MaterialInstance? = null
     private var wireMaterial: MaterialInstance? = null
+    private var edgeMaterial: MaterialInstance? = null
     private var gridMaterial: MaterialInstance? = null
     private var planeMaterial: MaterialInstance? = null
     private var markerAMaterial: MaterialInstance? = null
@@ -91,6 +94,7 @@ class ViewerRenderer(context: Context) {
 
     private val modelEntity = entityManager.create()
     private val wireEntity = entityManager.create()
+    private val edgeEntity = entityManager.create()
     private val gridEntity = entityManager.create()
     private val planeEntity = entityManager.create()
     private val markerAEntity = entityManager.create()
@@ -102,8 +106,10 @@ class ViewerRenderer(context: Context) {
 
     private var modelBuffers: MeshBuffers? = null
     private var wireIndices: IndexBuffer? = null
+    private var edgeIndices: IndexBuffer? = null
     private var hasModelRenderable = false
     private var hasWireRenderable = false
+    private var hasEdgeRenderable = false
 
     private val entitiesInScene = HashSet<Int>()
 
@@ -193,12 +199,13 @@ class ViewerRenderer(context: Context) {
         gridMesh.destroy(engine)
 
         listOf(
-            modelMaterial, wireMaterial, gridMaterial, planeMaterial,
+            modelMaterial, evenMaterial, wireMaterial, edgeMaterial, gridMaterial, planeMaterial,
             markerAMaterial, markerBMaterial, lineMaterial,
         ).forEach { instance -> instance?.let { engine.destroyMaterialInstance(it) } }
 
         materials?.let {
             engine.destroyMaterial(it.model)
+            engine.destroyMaterial(it.even)
             engine.destroyMaterial(it.overlay)
             engine.destroyMaterial(it.translucent)
         }
@@ -212,8 +219,9 @@ class ViewerRenderer(context: Context) {
         engine.destroyRenderer(renderer)
 
         listOf(
-            modelEntity, wireEntity, gridEntity, planeEntity, markerAEntity, markerBEntity,
-            lineEntity, keyLightEntity, fillLightEntity, rimLightEntity, cameraEntity,
+            modelEntity, wireEntity, edgeEntity, gridEntity, planeEntity, markerAEntity,
+            markerBEntity, lineEntity, keyLightEntity, fillLightEntity, rimLightEntity,
+            cameraEntity,
         ).forEach { entityManager.destroy(it) }
 
         engine.destroy()
@@ -268,6 +276,7 @@ class ViewerRenderer(context: Context) {
 
         releaseModel()
         currentModel = model
+        placeGrid(model)
         if (model == null) return
 
         val buffers = GeometryFactory.buildModel(engine, model)
@@ -309,9 +318,46 @@ class ViewerRenderer(context: Context) {
             )
         }
 
+        val edges = model.featureEdges
+        if (edges != null && edges.isNotEmpty()) {
+            val buffer = GeometryFactory.buildLineIndices(engine, edges)
+            edgeIndices = buffer
+            RenderableManager.Builder(1)
+                .boundingBox(box)
+                .geometry(0, RenderableManager.PrimitiveType.LINES, buffers.vertices, buffer, 0, edges.size)
+                .material(0, requireNotNull(edgeMaterial))
+                .castShadows(false)
+                .receiveShadows(false)
+                .build(engine, edgeEntity)
+            transformManager.create(edgeEntity)
+            hasEdgeRenderable = true
+        } else if (edges == null) {
+            onNotice?.invoke(
+                "Edge outlines are unavailable above " +
+                    "${FeatureEdges.MAX_TRIANGLES / 1_000} k triangles.",
+            )
+        }
+
         // Force the next sync to push every parameter to the new renderables.
         lastAppearance = null
         lastSection = null
+    }
+
+    /**
+     * Sits the ground grid (the XY plane) under the model's base, so the part rests on it
+     * the way it would on a build plate. A flat part would otherwise float well above a
+     * grid fixed at -1, the bottom of a model that fills its whole normalised box.
+     */
+    private fun placeGrid(model: LoadedModel?) {
+        val z = if (model != null) {
+            -(model.sourceSize.z * model.worldPerSourceUnit * 0.5f) - GRID_CLEARANCE
+        } else {
+            EMPTY_GRID_Z
+        }
+        transformManager.setTransform(
+            transformManager.getInstance(gridEntity),
+            Mat4.translation(Vec3(0f, 0f, z)),
+        )
     }
 
     private fun releaseModel() {
@@ -325,8 +371,15 @@ class ViewerRenderer(context: Context) {
             engine.destroyEntity(wireEntity)
             hasWireRenderable = false
         }
+        if (hasEdgeRenderable) {
+            setInScene(edgeEntity, false)
+            engine.destroyEntity(edgeEntity)
+            hasEdgeRenderable = false
+        }
         wireIndices?.let { engine.destroyIndexBuffer(it) }
         wireIndices = null
+        edgeIndices?.let { engine.destroyIndexBuffer(it) }
+        edgeIndices = null
         modelBuffers?.destroy(engine)
         modelBuffers = null
         currentModel = null
@@ -336,20 +389,30 @@ class ViewerRenderer(context: Context) {
         val appearance = state.appearance
         if (appearance != lastAppearance) {
             lastAppearance = appearance
+            val red = toLinear(appearance.color.red)
+            val green = toLinear(appearance.color.green)
+            val blue = toLinear(appearance.color.blue)
             modelMaterial?.apply {
-                setParameter(
-                    ViewerMaterials.PARAM_BASE_COLOR,
-                    toLinear(appearance.color.red),
-                    toLinear(appearance.color.green),
-                    toLinear(appearance.color.blue),
-                )
+                setParameter(ViewerMaterials.PARAM_BASE_COLOR, red, green, blue)
                 setParameter(ViewerMaterials.PARAM_METALLIC, appearance.metallic)
                 setParameter(ViewerMaterials.PARAM_ROUGHNESS, appearance.roughness)
+            }
+            evenMaterial?.setParameter(ViewerMaterials.PARAM_BASE_COLOR, red, green, blue)
+
+            // One renderable, two looks: swapping its material instance is cheaper than a
+            // second entity sharing the same vertex buffer, and cannot drift out of sync.
+            if (hasModelRenderable) {
+                val instance = if (appearance.shading.evenlyLit) evenMaterial else modelMaterial
+                if (instance != null) {
+                    val renderables = engine.renderableManager
+                    renderables.setMaterialInstanceAt(renderables.getInstance(modelEntity), 0, instance)
+                }
             }
         }
 
         setInScene(modelEntity, hasModelRenderable && appearance.shading.drawsSolid)
         setInScene(wireEntity, hasWireRenderable && appearance.shading.drawsWireframe)
+        setInScene(edgeEntity, hasEdgeRenderable && appearance.shading.drawsFeatureEdges)
         setInScene(gridEntity, appearance.showGrid)
     }
 
@@ -360,7 +423,7 @@ class ViewerRenderer(context: Context) {
 
             val plane = section.planeEquation()
             val enabled = if (section.enabled) 1f else 0f
-            for (instance in listOfNotNull(modelMaterial, wireMaterial)) {
+            for (instance in listOfNotNull(modelMaterial, evenMaterial, wireMaterial, edgeMaterial)) {
                 instance.setParameter(ViewerMaterials.PARAM_CLIP_PLANE, plane[0], plane[1], plane[2], plane[3])
                 instance.setParameter(ViewerMaterials.PARAM_CLIP_ENABLED, enabled)
             }
@@ -483,35 +546,39 @@ class ViewerRenderer(context: Context) {
             CameraState.WORLD_UP.x.toDouble(), CameraState.WORLD_UP.y.toDouble(), CameraState.WORLD_UP.z.toDouble(),
         )
 
-        // The key light follows the camera so whatever the user looks at is always lit.
+        // The key light follows the camera so whatever the user looks at is always lit,
+        // tilted slightly downwards (-Z) so upper faces read brighter than lower ones.
         val forward = cameraState.forward
         lightManager.setDirection(
             lightManager.getInstance(keyLightEntity),
-            forward.x, forward.y - 0.35f, forward.z,
+            forward.x, forward.y, forward.z - 0.35f,
         )
     }
 
     // ------------------------------------------------------------------ scene setup
 
     private fun createLights() {
+        // Directions are for the Z-up world. They are the original Y-up rig turned with
+        // the world, (x, y, z) -> (x, -z, y), so the lighting relative to the default
+        // camera is unchanged. The key light's is replaced every frame.
         LightManager.Builder(LightManager.Type.DIRECTIONAL)
             .color(1f, 0.98f, 0.95f)
             .intensity(KEY_LIGHT_LUX)
-            .direction(0f, -0.4f, -1f)
+            .direction(0f, 1f, -0.4f)
             .castShadows(false)
             .build(engine, keyLightEntity)
 
         LightManager.Builder(LightManager.Type.DIRECTIONAL)
             .color(0.80f, 0.86f, 1f)
             .intensity(FILL_LIGHT_LUX)
-            .direction(0.8f, 0.5f, 0.3f)
+            .direction(0.8f, -0.3f, 0.5f)
             .castShadows(false)
             .build(engine, fillLightEntity)
 
         LightManager.Builder(LightManager.Type.DIRECTIONAL)
             .color(1f, 0.95f, 0.85f)
             .intensity(RIM_LIGHT_LUX)
-            .direction(-0.6f, 0.2f, 0.75f)
+            .direction(-0.6f, -0.75f, 0.2f)
             .castShadows(false)
             .build(engine, rimLightEntity)
 
@@ -528,9 +595,19 @@ class ViewerRenderer(context: Context) {
             setParameter(ViewerMaterials.PARAM_ROUGHNESS, 0.45f)
             setParameter(ViewerMaterials.PARAM_CLIP_PLANE, 1f, 0f, 0f, 0f)
             setParameter(ViewerMaterials.PARAM_CLIP_ENABLED, 0f)
+            // Lines drawn exactly on a surface fight it for depth and flicker in and out.
+            // Pushing the faces back a hair lets wireframe and edge lines win cleanly.
+            setPolygonOffset(SURFACE_DEPTH_BIAS_SCALE, SURFACE_DEPTH_BIAS_CONSTANT)
+        }
+        evenMaterial = materials.even.createInstance().apply {
+            setParameter(ViewerMaterials.PARAM_BASE_COLOR, 0.76f, 0.79f, 0.84f)
+            setParameter(ViewerMaterials.PARAM_CLIP_PLANE, 1f, 0f, 0f, 0f)
+            setParameter(ViewerMaterials.PARAM_CLIP_ENABLED, 0f)
+            setPolygonOffset(SURFACE_DEPTH_BIAS_SCALE, SURFACE_DEPTH_BIAS_CONSTANT)
         }
 
         wireMaterial = overlayInstance(materials, WIREFRAME_COLOR, clippable = true)
+        edgeMaterial = overlayInstance(materials, EDGE_COLOR, clippable = true)
         gridMaterial = overlayInstance(materials, GRID_COLOR, clippable = false)
         markerAMaterial = overlayInstance(materials, MARKER_A_COLOR, clippable = false)
         markerBMaterial = overlayInstance(materials, MARKER_B_COLOR, clippable = false)
@@ -550,6 +627,7 @@ class ViewerRenderer(context: Context) {
         buildStatic(lineEntity, tubeMesh, RenderableManager.PrimitiveType.TRIANGLES, lineMaterial!!, 4f)
 
         // Everything but the grid starts hidden; the per-frame sync adds what is needed.
+        placeGrid(null)
         setInScene(gridEntity, true)
     }
 
@@ -632,10 +710,23 @@ class ViewerRenderer(context: Context) {
         val BACKGROUND = floatArrayOf(0.012f, 0.017f, 0.025f)
         val GRID_COLOR = floatArrayOf(0.055f, 0.075f, 0.10f)
         val WIREFRAME_COLOR = floatArrayOf(0.18f, 0.45f, 0.70f)
+
+        /** Near-black outlines, as a CAD viewer draws edges over a shaded part. */
+        val EDGE_COLOR = floatArrayOf(0.012f, 0.014f, 0.018f)
+
+        /** Depth bias on the model's faces so coincident lines draw over them. */
+        const val SURFACE_DEPTH_BIAS_SCALE = 1f
+        const val SURFACE_DEPTH_BIAS_CONSTANT = 1f
         val MARKER_A_COLOR = floatArrayOf(0.90f, 0.22f, 0.15f)
         val MARKER_B_COLOR = floatArrayOf(0.15f, 0.45f, 0.90f)
         val LINE_COLOR = floatArrayOf(1.0f, 0.62f, 0.08f)
         val PLANE_COLOR = floatArrayOf(0.35f, 0.65f, 1.0f, 0.13f)
+
+        /** Grid height with nothing loaded: where a model filling its box would rest. */
+        const val EMPTY_GRID_Z = -1.001f
+
+        /** Gap between the model's base and the grid, enough to avoid depth fighting. */
+        const val GRID_CLEARANCE = 0.001f
 
         /** A little past the model's edge, so the plane overhangs the cut. */
         const val PLANE_SIZE_FACTOR = 1.18f

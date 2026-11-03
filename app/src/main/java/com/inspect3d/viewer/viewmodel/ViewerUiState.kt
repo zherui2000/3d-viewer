@@ -12,14 +12,28 @@ enum class InteractionMode(val label: String) {
     MEASURE("Measure"),
 }
 
+/**
+ * How the model is drawn. The two "Shaded" modes are the eDrawings-style display: evenly
+ * lit, with no face falling into shadow, and in the second the part's real edges outlined
+ * in black. "Solid + mesh" instead draws every triangle edge, which shows how the file was
+ * tessellated rather than how the part looks.
+ */
 enum class ShadingMode(val label: String) {
     SOLID("Solid"),
+    SHADED("Shaded"),
+    SHADED_WITH_EDGES("Shaded with edges"),
     WIREFRAME("Wireframe"),
-    SOLID_WITH_EDGES("Solid + edges"),
+    SOLID_WITH_MESH("Solid + mesh"),
     ;
 
     val drawsSolid: Boolean get() = this != WIREFRAME
-    val drawsWireframe: Boolean get() = this != SOLID
+    val drawsWireframe: Boolean get() = this == WIREFRAME || this == SOLID_WITH_MESH
+
+    /** The flat, shadow-free lighting of a CAD viewer instead of the lit material. */
+    val evenlyLit: Boolean get() = this == SHADED || this == SHADED_WITH_EDGES
+
+    /** Outlines where faces meet at a crease, and the open boundaries of the surface. */
+    val drawsFeatureEdges: Boolean get() = this == SHADED_WITH_EDGES
 }
 
 /** Preset surface colours, given in sRGB; the renderer converts them to linear. */
@@ -49,6 +63,11 @@ data class AppearanceState(
  *
  * Offsets are in world units: the model is normalised so its largest half-extent is 1,
  * so the useful range is about -1.5 to 1.5 for any file.
+ *
+ * The normal is spherical in the Z-up world: azimuth turns about +Z from +X towards +Y,
+ * elevation tilts towards +Z. The default, elevation 90°, is a normal of +Z, which makes
+ * the cut the XY plane through the model's centre: a horizontal slice, as a slicer or a
+ * floor plan would take, removing the upper half.
  */
 data class SectionState(
     val enabled: Boolean = false,
@@ -56,7 +75,7 @@ data class SectionState(
     val offsetY: Float = 0f,
     val offsetZ: Float = 0f,
     val azimuthDegrees: Float = 0f,
-    val elevationDegrees: Float = 0f,
+    val elevationDegrees: Float = XY_PLANE_ELEVATION,
     val flipped: Boolean = false,
     val showPlane: Boolean = true,
 ) {
@@ -70,8 +89,8 @@ data class SectionState(
             val horizontal = cos(elevation)
             val direction = Vec3(
                 horizontal * cos(azimuth),
-                sin(elevation),
                 horizontal * sin(azimuth),
+                sin(elevation),
             ).normalized()
             return if (flipped) -direction else direction
         }
@@ -84,6 +103,9 @@ data class SectionState(
 
     companion object {
         const val OFFSET_RANGE = 1.5f
+
+        /** Elevation that points the normal straight up, making the cut the XY plane. */
+        const val XY_PLANE_ELEVATION = 90f
     }
 }
 

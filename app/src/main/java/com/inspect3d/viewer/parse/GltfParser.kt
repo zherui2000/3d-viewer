@@ -21,6 +21,12 @@ import java.util.Base64
  * Materials, textures, animation, skinning, morph targets and Draco compression are
  * ignored; a Draco-compressed or external-buffer file is reported as an error the user can
  * act on rather than silently rendering nothing.
+ *
+ * glTF is the one format here with a mandated up axis, and it is +Y. The viewer is Z-up,
+ * so every scene is turned +90° about X on the way in — the same conversion Blender
+ * applies on import — and a glTF model stands upright on the grid like an STL does. The
+ * reported dimensions and measured deltas are therefore in the viewer's axes: a glTF
+ * object's height is its Z.
  */
 object GltfParser {
 
@@ -37,6 +43,17 @@ object GltfParser {
 
     private const val MODE_TRIANGLES = 4
     private const val MAX_NESTING = 64
+
+    /**
+     * glTF's Y-up frame to the viewer's Z-up one: (x, y, z) -> (x, -z, y), a proper
+     * rotation, so triangle winding and therefore front faces are preserved. Column-major.
+     */
+    internal val Y_UP_TO_Z_UP = floatArrayOf(
+        1f, 0f, 0f, 0f,
+        0f, 0f, 1f, 0f,
+        0f, -1f, 0f, 0f,
+        0f, 0f, 0f, 1f,
+    )
 
     fun parse(bytes: ByteArray): RawMesh {
         val container = readContainer(bytes)
@@ -114,10 +131,10 @@ object GltfParser {
                         if (length > 1e-20f) {
                             normals.add(scratch[0] / length, scratch[1] / length, scratch[2] / length)
                         } else {
-                            normals.add(0f, 1f, 0f)
+                            normals.add(0f, 0f, 1f)
                         }
                     } else {
-                        normals.add(0f, 1f, 0f)
+                        normals.add(0f, 0f, 1f)
                     }
                     i += 3
                 }
@@ -143,14 +160,17 @@ object GltfParser {
             }
         }
 
+        // The up-axis conversion is the root of every transform chain, so positions and
+        // (via the normal matrix derived from the same transform) normals both arrive in
+        // the viewer's frame without a second pass.
         if (nodes != null && nodes.length() > 0) {
             for (nodeIndex in sceneRoots(root, nodes)) {
-                walkNode(nodes, nodeIndex, Mat4.identity(), 0) { mesh, transform ->
+                walkNode(nodes, nodeIndex, Y_UP_TO_Z_UP, 0) { mesh, transform ->
                     emitMesh(mesh, transform)
                 }
             }
         } else {
-            for (m in 0 until meshes.length()) emitMesh(m, Mat4.identity())
+            for (m in 0 until meshes.length()) emitMesh(m, Y_UP_TO_Z_UP)
         }
 
         if (indices.size < 3) {

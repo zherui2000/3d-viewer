@@ -7,7 +7,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * The three materials the viewer renders with, compiled on the device at start-up by
+ * The four materials the viewer renders with, compiled on the device at start-up by
  * Filament's runtime material compiler (`filamat`). Compiling here rather than shipping
  * pre-built `.filamat` blobs keeps the clipping logic in this file, where it can be read
  * next to the code that feeds it, and removes the offline `matc` step from the build.
@@ -33,7 +33,12 @@ import java.nio.ByteOrder
 class ViewerMaterials private constructor(
     /** Lit, double-sided, clippable: the model itself. */
     val model: Material,
-    /** Unlit, clippable: wireframe, grid, measurement markers and the measurement line. */
+    /**
+     * Evenly lit, double-sided, clippable: the model in the eDrawings-style "Shaded"
+     * modes, where no face may fall into shadow.
+     */
+    val even: Material,
+    /** Unlit, clippable: wireframe, edges, grid, measurement markers and line. */
     val overlay: Material,
     /** Unlit, pre-multiplied transparent: the section plane visualisation. */
     val translucent: Material,
@@ -69,6 +74,29 @@ class ViewerMaterials private constructor(
                 material.roughness = materialParams.$PARAM_ROUGHNESS;
             }
         """.trimIndent()
+
+        /**
+         * The CAD-viewer look: a headlight over a strong ambient term. Light always comes
+         * from the viewer's side, so no face can turn away from it into shadow, while the
+         * brightness still falls off with the angle to the eye enough for curvature and
+         * steps to read. Unlit rather than a re-rigged lit material so the result does
+         * not depend on light intensities, exposure or the metallic slider at all.
+         *
+         * `abs()` because the material is double sided: once a section opens the part,
+         * the inside of the shell should read the same as the outside.
+         */
+        private val EVEN_FRAGMENT_SHADER = """
+            void material(inout MaterialInputs material) {
+                prepareMaterial(material);
+                float cut = step(0.0, variable_$CLIP_VARIABLE.x) * materialParams.$PARAM_CLIP_ENABLED;
+                float facing = abs(dot(getWorldGeometricNormalVector(), getWorldViewVector()));
+                float light = $EVEN_AMBIENT + (1.0 - $EVEN_AMBIENT) * facing;
+                material.baseColor = vec4(materialParams.$PARAM_BASE_COLOR * light, 1.0 - cut);
+            }
+        """.trimIndent()
+
+        /** The floor of the even lighting: a face seen edge-on keeps this much colour. */
+        private const val EVEN_AMBIENT = "0.62"
 
         private val OVERLAY_FRAGMENT_SHADER = """
             void material(inout MaterialInputs material) {
@@ -140,6 +168,21 @@ class ViewerMaterials private constructor(
                     material(MODEL_FRAGMENT_SHADER)
                 }
 
+                val even = build(engine, "InspectEven") {
+                    shading(MaterialBuilder.Shading.UNLIT)
+                    blending(MaterialBuilder.BlendingMode.MASKED)
+                    doubleSided(true)
+                    require(MaterialBuilder.VertexAttribute.POSITION)
+                    // Tangents carry the normal; unlit materials do not ask for it otherwise.
+                    require(MaterialBuilder.VertexAttribute.TANGENTS)
+                    variable(MaterialBuilder.Variable.CUSTOM0, CLIP_VARIABLE)
+                    uniformParameter(MaterialBuilder.UniformType.FLOAT3, PARAM_BASE_COLOR)
+                    uniformParameter(MaterialBuilder.UniformType.FLOAT4, PARAM_CLIP_PLANE)
+                    uniformParameter(MaterialBuilder.UniformType.FLOAT, PARAM_CLIP_ENABLED)
+                    materialVertex(CLIP_VERTEX_SHADER)
+                    material(EVEN_FRAGMENT_SHADER)
+                }
+
                 val overlay = build(engine, "InspectOverlay") {
                     shading(MaterialBuilder.Shading.UNLIT)
                     blending(MaterialBuilder.BlendingMode.MASKED)
@@ -166,7 +209,7 @@ class ViewerMaterials private constructor(
                     material(TRANSLUCENT_FRAGMENT_SHADER)
                 }
 
-                return ViewerMaterials(model, overlay, translucent)
+                return ViewerMaterials(model, even, overlay, translucent)
             } finally {
                 // Frees the compiler's native resources; the compiled materials stay valid.
                 MaterialBuilder.shutdown()
@@ -183,7 +226,7 @@ class ViewerMaterials private constructor(
                 .platform(MaterialBuilder.Platform.MOBILE)
                 .targetApi(MaterialBuilder.TargetApi.OPENGL)
                 // NONE keeps start-up fast: the GLSL is passed through without running the
-                // SPIR-V optimiser, which is what we want for three small shaders.
+                // SPIR-V optimiser, which is what we want for four small shaders.
                 .optimization(MaterialBuilder.Optimization.NONE)
             builder.configure()
 

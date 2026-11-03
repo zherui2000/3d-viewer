@@ -270,16 +270,26 @@ fun ViewerScreen(
                     .fillMaxWidth(),
                 horizontalAlignment = Alignment.End,
             ) {
-                // Only once something is loaded: with an empty viewport the centred
-                // "Choose a file" button is already the call to action, and showing both
-                // puts the same command on screen twice.
-                if (state.hasModel) {
-                    ExtendedFloatingActionButton(
-                        onClick = actions.openFilePicker,
-                        modifier = Modifier.padding(end = 16.dp, bottom = 12.dp),
-                        icon = { Icon(Icons.Rounded.FolderOpen, contentDescription = null) },
-                        text = { Text("Open another") },
-                    )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, end = 16.dp, bottom = 12.dp),
+                    verticalAlignment = Alignment.Bottom,
+                ) {
+                    // Inside the bottom column rather than pinned to the screen corner,
+                    // so it rides up with the controls panel instead of being covered.
+                    AxisIndicator(camera = state.camera)
+                    Spacer(Modifier.weight(1f))
+                    // Only once something is loaded: with an empty viewport the centred
+                    // "Choose a file" button is already the call to action, and showing
+                    // both puts the same command on screen twice.
+                    if (state.hasModel) {
+                        ExtendedFloatingActionButton(
+                            onClick = actions.openFilePicker,
+                            icon = { Icon(Icons.Rounded.FolderOpen, contentDescription = null) },
+                            text = { Text("Open another") },
+                        )
+                    }
                 }
 
                 ControlsPanel(
