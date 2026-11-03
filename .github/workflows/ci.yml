@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch makes the previous run's answer irrelevant, and an
+# Android build is slow enough that queuing them serially wastes real time.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Test, lint and assemble
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      # gradle-wrapper.jar is the one binary committed to this repository, so it is what
+      # a supply-chain attack would aim at. This checks it against Gradle's published
+      # checksums before any Gradle code is allowed to execute.
+      - name: Validate the Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up the Android SDK
+        uses: android-actions/setup-android@v3
+
+      # AGP does not download missing SDK components, so they are installed explicitly.
+      # These are the versions AGP 9.5.0 resolves by default for this project, which
+      # keeps CI compiling against the same components as a local build. If this step
+      # ever fails to find a package, the runner's cmdline-tools is too old to see it —
+      # pin a newer one with setup-android's `cmdline-tools-version` input.
+      - name: Install SDK components
+        run: sdkmanager --install "platforms;android-37.0" "build-tools;36.0.0"
+
+      # Caches ~/.gradle (wrapper distributions, dependencies and the build cache) and
+      # stops the daemon at the end of the job.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # A checkout made on Windows does not carry the executable bit.
+      - name: Make the wrapper executable
+        run: chmod +x ./gradlew
+
+      # Each check is its own step so the log says plainly which one failed, and
+      # `!cancelled()` lets the later steps still run after an earlier failure — one
+      # red run should report every problem it can find, not just the first.
+      - name: Unit tests
+        run: ./gradlew test
+
+      - name: Android Lint
+        if: ${{ !cancelled() }}
+        run: ./gradlew lint
+
+      - name: Assemble debug APK
+        if: ${{ !cancelled() }}
+        run: ./gradlew assembleDebug
+
+      # The release variant is built because it is the only one that runs R8. Filament
+      # is driven through JNI, so a missing keep rule does not show up until something
+      # is shrunk — and then only at runtime. The APK is unsigned; no keystore is
+      # needed, and none belongs in CI.
+      - name: Assemble release APK (unsigned, R8 enabled)
+        if: ${{ !cancelled() }}
+        run: ./gradlew assembleRelease
+
+      - name: Upload test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+          if-no-files-found: ignore
+
+      - name: Upload lint report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report
+          path: app/build/reports/lint-results-*.html
+          if-no-files-found: ignore
+
+      - name: Upload APKs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: apks
+          path: app/build/outputs/apk/**/*.apk
+          if-no-files-found: ignore

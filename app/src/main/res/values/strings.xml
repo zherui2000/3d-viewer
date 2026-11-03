@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Inspect3D</string>
+    <string name="open_model">Open model</string>
+    <string name="controls">Controls</string>
+</resources>

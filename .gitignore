@@ -1,0 +1,33 @@
+# Build output
+build/
+.gradle/
+.kotlin/
+
+# Machine-local SDK location. Must never be committed: CI resolves the SDK from
+# ANDROID_HOME, and a checked-in Windows sdk.dir would break every Linux runner.
+local.properties
+
+# Signing material
+*.jks
+*.keystore
+keystore.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Lint and test output that lives outside build/
+lint-results*.xml
+lint-results*.html
+
+# Per-developer Claude Code settings (.claude/settings.json is shared and does belong
+# in the repository; the .local.json beside it does not).
+.claude/settings.local.json
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini

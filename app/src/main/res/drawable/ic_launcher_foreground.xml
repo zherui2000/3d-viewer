@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Isometric cube outline with a measurement diagonal. -->
+    <path
+        android:fillColor="#3C82F6"
+        android:fillAlpha="0.25"
+        android:pathData="M54,30 L74,41 L74,65 L54,76 L34,65 L34,41 Z" />
+    <path
+        android:strokeColor="#7DD3FC"
+        android:strokeWidth="2.5"
+        android:fillColor="#00000000"
+        android:pathData="M54,30 L74,41 L74,65 L54,76 L34,65 L34,41 Z" />
+    <path
+        android:strokeColor="#7DD3FC"
+        android:strokeWidth="2.5"
+        android:fillColor="#00000000"
+        android:pathData="M34,41 L54,52 L74,41 M54,52 L54,76" />
+    <path
+        android:strokeColor="#FBBF24"
+        android:strokeWidth="2.5"
+        android:fillColor="#00000000"
+        android:pathData="M34,65 L74,41" />
+</vector>

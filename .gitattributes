@@ -1,0 +1,30 @@
+# Normalise text to LF in the index whatever anyone's core.autocrlf is set to. This
+# repository is authored on Windows and built on a Linux runner, so line endings cannot
+# be left to each machine's configuration.
+* text=auto
+
+# The wrapper's shell script is executed by the CI runner. A CR at the end of its
+# shebang line makes the kernel look for an interpreter named "/bin/sh\r" and fail with
+# a message that does not mention line endings at all. Pin it to LF everywhere.
+gradlew text eol=lf
+*.sh text eol=lf
+
+# Batch files are run by cmd.exe and need CRLF.
+*.bat text eol=crlf
+
+# Files git must never rewrite. gradle-wrapper.jar especially: CI verifies it against
+# Gradle's published checksums, and any normalisation would fail that check.
+*.jar binary
+*.apk binary
+*.aar binary
+*.so binary
+*.jks binary
+*.keystore binary
+*.png binary
+*.webp binary
+*.filamat binary
+
+# 3D model fixtures, in case any are ever checked in.
+*.stl binary
+*.glb binary
+*.3mf binary
