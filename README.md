@@ -170,25 +170,43 @@ from the viewer are drawn first and dimmed.
 | Wireframe | every triangle edge, no surface |
 | Solid + mesh | the lit surface with every triangle edge, to show how the file was tessellated |
 
-"Shaded" is a dedicated unlit material lit the way eDrawings lights a part:
+"Shaded" is a dedicated unlit material that draws a part the way eDrawings does, as glossy
+plastic under a light from over the viewer's shoulder:
 
 ```
-colour × (0.18 + 0.72 × key + 0.18 × head) + 0.12 × highlight
+colour × (0.12 + 0.55 × key + 0.18 × head)  +  0.45 × keyGloss + 0.10 × headGloss
 ```
 
 * **key:** a light above and to the left of the viewer, about 50° off the line of sight.
   It turns with the camera, so the part is modelled the same way from every angle.
 * **head:** a headlight, so nothing the viewer can see is left unlit.
-* **highlight:** a soft specular term.
+* **keyGloss, headGloss:** Blinn-Phong highlights (shininess 20 and 32).
 
-The 0.18 floor means no face ever goes black, and no shadows are cast. It is a material of
-its own rather than a re-rigged light setup, so the look cannot drift with light
-intensities, exposure or the metallic slider.
+The 0.12 floor means no face goes black, and no shadows are cast. It is a material of its
+own rather than a re-rigged light setup, so the look cannot drift with light intensities,
+exposure or the metallic slider.
 
-The first version was a headlight over a 62 % floor alone. It read well on a box's flat
-faces, but on a curved, organic part, tested on a 570 k-triangle Fischer-Koch surface on a
-Galaxy S25 Ultra, nearly every face landed near full brightness and the shape washed out
-to white. The key light carries the form; the headlight only fills.
+While a Shaded mode is on, the view's **tone curve is linear**, so these values reach the
+screen as written. Filament's default curve is filmic: it crushes darks and compresses
+brights into a shoulder, which suits the lit Solid material its lights were tuned through.
+But the Shaded output landed mostly in that shoulder, so on the phone the darkest tenth of
+a part still showed at 125/255 and the median at 191: white, however the lights were set.
+The background and grid get colours matched to what the filmic curve shows them as,
+measured on screen, so only the model changes when the mode does.
+
+Getting here took four rounds on a Galaxy S25 Ultra with the user's own 683 k-triangle
+Fischer-Koch STL, each judged against Solid from the same view:
+
+| Round | What was wrong |
+| --- | --- |
+| headlight over a 62 % floor | every face near full brightness; washed out to white |
+| key light + 28 % floor | better on a box, still white on an organic part |
+| same, linear tone curve | measured range now wide, but matte light on a light, finely bumpy part still *looked* flat |
+| **+ glossy highlights** | form reads like Solid: 10th/50th/90th percentile 103/159/212 against Solid's 111/162/194 |
+
+The lesson in the last row: the eye reads a curved part's form mostly from specular
+streaks along its ridges, not from diffuse gradients. That is what made Solid look
+shaded, and eDrawings' plastic look has it too.
 
 The **edges** in "Shaded with edges" are *feature* edges (`FeatureEdges.kt`):
 

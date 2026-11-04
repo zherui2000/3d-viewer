@@ -103,15 +103,19 @@ class ViewerMaterials private constructor(
         """.trimIndent()
 
         /**
-         * The CAD-viewer look, as eDrawings shades a part: a key light from above and to
-         * the left of the viewer that models the shape, a headlight so nothing the viewer
-         * can see is left unlit, a soft highlight, and an ambient floor so no face falls
-         * into black. No shadows are cast. Unlit rather than a re-rigged lit material, so
-         * the result does not depend on light intensities, exposure or the metallic slider.
+         * The CAD-viewer look, as eDrawings shades a part: glossy plastic under a key light
+         * from above and to the left of the viewer, a headlight so nothing the viewer can
+         * see is left unlit, and an ambient floor so no face falls into black. No shadows
+         * are cast. Unlit rather than a re-rigged lit material, so the result does not
+         * depend on light intensities, exposure or the metallic slider.
          *
-         * The first version used a headlight over 62% ambient alone. That reads well on a
-         * box's flat faces, but on a curved, organic part nearly every face lands near full
-         * brightness and the shape washes out to white, so the key light carries the form.
+         * The specular highlights carry most of the shape. Matte (Lambert) light alone, at
+         * any balance tried, read as "no shading" on a phone: on a light, finely bumpy
+         * part its variation is soft and local, and the eye reads form from the bright
+         * streaks where a surface turns towards the light. Those streaks are what made the
+         * lit Solid mode look shaded, and what eDrawings' plastic look has too. The key
+         * light's is broad and strong; a weaker headlight one lights the crown of every
+         * bump facing the viewer.
          *
          * The normal is turned towards the viewer first: the material is double sided, and
          * once a section opens the part, the inside of the shell must light like the outside.
@@ -128,23 +132,28 @@ class ViewerMaterials private constructor(
 
                 float key = max(dot(n, l), 0.0);
                 float head = max(dot(n, v), 0.0);
-                float highlight = pow(max(dot(n, normalize(l + v)), 0.0), 48.0);
+                float keyGloss = pow(max(dot(n, normalize(l + v)), 0.0), $EVEN_KEY_SHININESS);
+                float headGloss = pow(head, $EVEN_HEAD_SHININESS);
 
-                float light = $EVEN_AMBIENT + $EVEN_KEY * key + $EVEN_HEAD * head;
-                vec3 rgb = materialParams.$PARAM_BASE_COLOR * light + vec3($EVEN_HIGHLIGHT * highlight);
+                float diffuse = $EVEN_AMBIENT + $EVEN_KEY * key + $EVEN_HEAD * head;
+                float gloss = $EVEN_KEY_GLOSS * keyGloss + $EVEN_HEAD_GLOSS * headGloss;
+                vec3 rgb = materialParams.$PARAM_BASE_COLOR * diffuse + vec3(gloss);
                 material.baseColor = vec4(rgb, 1.0 - cut);
             }
         """.trimIndent()
 
-        // The floor is what a face turned away from the key light, seen edge-on, keeps:
-        // a dark grey, never black. A face lit squarely by both lights reaches about 1.08.
-        // Tuned on a Galaxy S25 Ultra against an organic 570 k-triangle part: with a 0.28
-        // floor and a key near the line of sight, nearly every face of a part seen from
-        // above sat at 90-100% and the shape still washed out.
-        private const val EVEN_AMBIENT = "0.18"
-        private const val EVEN_KEY = "0.72"
+        // Tuned on a Galaxy S25 Ultra against an organic 680 k-triangle part, with the view's
+        // tone curve linear (see ViewerRenderer.linearGrading) so these numbers reach the
+        // screen as written. Diffuse tops out at 0.85 of the surface colour, about 190/255
+        // for the default Steel, and a face turned away from the key keeps 0.12-0.3, a
+        // dark grey, never black. The highlights add up to 0.55 of white on top.
+        private const val EVEN_AMBIENT = "0.12"
+        private const val EVEN_KEY = "0.55"
         private const val EVEN_HEAD = "0.18"
-        private const val EVEN_HIGHLIGHT = "0.12"
+        private const val EVEN_KEY_GLOSS = "0.45"
+        private const val EVEN_KEY_SHININESS = "20.0"
+        private const val EVEN_HEAD_GLOSS = "0.10"
+        private const val EVEN_HEAD_SHININESS = "32.0"
 
         private val OVERLAY_FRAGMENT_SHADER = """
             void material(inout MaterialInputs material) {

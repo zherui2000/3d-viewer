@@ -7,6 +7,7 @@ import android.view.Surface
 import android.view.SurfaceView
 import com.google.android.filament.Box
 import com.google.android.filament.Camera
+import com.google.android.filament.ColorGrading
 import com.google.android.filament.Engine
 import com.google.android.filament.EntityManager
 import com.google.android.filament.IndexBuffer
@@ -15,6 +16,7 @@ import com.google.android.filament.MaterialInstance
 import com.google.android.filament.RenderableManager
 import com.google.android.filament.Skybox
 import com.google.android.filament.SwapChain
+import com.google.android.filament.ToneMapper
 import com.google.android.filament.View
 import com.google.android.filament.Viewport
 import com.google.android.filament.android.DisplayHelper
@@ -125,6 +127,21 @@ class ViewerRenderer(context: Context) {
     private var lastAppearance: AppearanceState? = null
     private var lastSection: SectionState? = null
 
+    /**
+     * The tone curve for the Shaded modes. Filament's default curve is filmic: it crushes
+     * darks and compresses brights into a shoulder. That suits the lit material, whose
+     * lights and exposure were tuned through it, but the Shaded material computes its
+     * final brightness itself, and most of that range landed in the shoulder. Measured on
+     * a Galaxy S25 Ultra, the darkest tenth of a part still showed at 125 out of 255 and
+     * the median at 191: white with little shade, however the lights were set. A linear
+     * curve hands the shader's values to the screen unchanged, which is how eDrawings draws.
+     */
+    private val linearGrading = ColorGrading.Builder()
+        .toneMapper(ToneMapper.Linear())
+        .build(engine)
+    private val defaultGrading: ColorGrading? = view.colorGrading
+    private var linearGradingActive = false
+
     init {
         val compileStart = System.nanoTime()
         val compiled = runCatching { ViewerMaterials.create(engine) }
@@ -220,6 +237,7 @@ class ViewerRenderer(context: Context) {
 
         engine.destroyCameraComponent(cameraEntity)
         engine.destroyView(view)
+        engine.destroyColorGrading(linearGrading)
         engine.destroyScene(scene)
         engine.destroyRenderer(renderer)
 
@@ -419,6 +437,24 @@ class ViewerRenderer(context: Context) {
         setInScene(wireEntity, hasWireRenderable && appearance.shading.drawsWireframe)
         setInScene(edgeEntity, hasEdgeRenderable && appearance.shading.drawsFeatureEdges)
         setInScene(gridEntity, appearance.showGrid)
+        syncToneCurve(appearance.shading.evenlyLit)
+    }
+
+    /**
+     * Switches the tone curve with the display mode. The background and grid get colours
+     * matched to what the filmic curve shows them as, measured on screen, so the scene
+     * around the model does not jump when the mode changes; only the model's own shading
+     * changes.
+     */
+    private fun syncToneCurve(linear: Boolean) {
+        if (linear == linearGradingActive) return
+        linearGradingActive = linear
+        view.colorGrading = if (linear) linearGrading else defaultGrading
+
+        val background = if (linear) BACKGROUND_LINEAR_CURVE else BACKGROUND
+        skybox.setColor(background[0], background[1], background[2], 1f)
+        val grid = if (linear) GRID_COLOR_LINEAR_CURVE else GRID_COLOR
+        gridMaterial?.setParameter(ViewerMaterials.PARAM_BASE_COLOR, grid[0], grid[1], grid[2])
     }
 
     private fun syncSection(state: ViewerUiState) {
@@ -724,6 +760,11 @@ class ViewerRenderer(context: Context) {
 
         val BACKGROUND = floatArrayOf(0.012f, 0.017f, 0.025f)
         val GRID_COLOR = floatArrayOf(0.055f, 0.075f, 0.10f)
+
+        // The same two colours for the linear curve: what the filmic curve shows them as,
+        // measured on screen as sRGB (14, 21, 29) and (53, 67, 83), converted back to linear.
+        val BACKGROUND_LINEAR_CURVE = floatArrayOf(0.0044f, 0.0073f, 0.0123f)
+        val GRID_COLOR_LINEAR_CURVE = floatArrayOf(0.0356f, 0.0561f, 0.0865f)
         val WIREFRAME_COLOR = floatArrayOf(0.18f, 0.45f, 0.70f)
 
         /** Near-black outlines, as a CAD viewer draws edges over a shaded part. */
