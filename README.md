@@ -543,11 +543,24 @@ Verified on the emulator end to end: `adb shell am crash com.inspect3d.viewer` p
 919-byte report, the process died properly, the next launch showed the dialog, dismissing it
 deleted the file, and a further relaunch was clean.
 
-**One limit, which matters for this particular bug:** that handler sees *Java/Kotlin*
-exceptions only. A native abort (`SIGABRT`/`SIGSEGV`) inside Filament kills the process
-without passing through it, so if the beta still closes on that phone **and no dialog appears
-afterwards**, that absence is itself the diagnosis: it points at the native layer. Then only
-`adb logcat -b crash -d` will show the cause.
+**Native crashes are captured too, on Android 11 and later.** The uncaught-exception
+handler only sees Java/Kotlin exceptions; a native abort (`SIGABRT`/`SIGSEGV`) in Filament,
+the GPU driver or OpenCASCADE kills the process without passing through it. So at start-up,
+before Filament is touched, `CrashLog` also asks `ActivityManager.getHistoricalProcessExitReasons`
+how the previous process ended. A `REASON_CRASH_NATIVE` exit it has not reported before is
+written to the same file and shown in the same dialog: on Android 12+ with the signal, abort
+message, the crashing thread's backtrace and the last log lines, decoded from the tombstone
+the system kept (`Tombstone`, a minimal protobuf reader covered by `TombstoneTest`); on
+Android 11 with the system's one-line description only. Exits are reported once each,
+tracked by timestamp. The history survives an app update, so a phone that crashed on an
+older build shows that crash on the first launch of this one.
+
+The dialog is shown **before** the engine is created, and the viewer starts once it is
+dismissed. Otherwise a crash inside engine or shader set-up would repeat on the very launch
+meant to report it, and the report could never be read.
+
+On Android 10 and earlier, or if the dialog does not appear, `adb logcat -b crash -d` remains
+the way to see the cause.
 
 ### Rough edges
 

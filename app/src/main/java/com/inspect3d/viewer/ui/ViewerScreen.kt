@@ -90,6 +90,23 @@ fun ViewerScreen(
     val viewModel: ViewerViewModel = viewModel(factory = ViewerViewModel.Factory(application))
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
+    // If the previous run died, the report was written on the way down (or, for a native
+    // crash, collected from the system at start-up). Show it before the engine is created:
+    // a crash inside engine or shader set-up would otherwise repeat on this launch too and
+    // take the dialog down with it, so the report could never be read. The viewer starts
+    // once it is dismissed. Read once per composition tree, not on every recomposition.
+    var crashReport by remember { mutableStateOf(CrashLog.pending(context)) }
+    crashReport?.let { report ->
+        CrashReportDialog(
+            report = report,
+            onDismiss = {
+                CrashLog.clear(context)
+                crashReport = null
+            },
+        )
+        return
+    }
+
     // Creating the engine touches native code and the GPU driver. If that fails, show the
     // reason instead of letting the process die: a 3D viewer that vanishes on launch tells
     // the user nothing, and the message is the only clue they can act on or report.
@@ -169,20 +186,6 @@ fun ViewerScreen(
             setSectionFlipped = viewModel::setSectionFlipped,
             setSectionPlaneVisible = viewModel::setSectionPlaneVisible,
             resetSection = viewModel::resetSection,
-        )
-    }
-
-    // If the previous run died, the trace was written on the way down. Show it once, on
-    // the next launch, rather than letting the app close silently and leave nothing to go
-    // on. Read once per composition tree, not on every recomposition.
-    var crashReport by remember { mutableStateOf(CrashLog.pending(context)) }
-    crashReport?.let { report ->
-        CrashReportDialog(
-            report = report,
-            onDismiss = {
-                CrashLog.clear(context)
-                crashReport = null
-            },
         )
     }
 
