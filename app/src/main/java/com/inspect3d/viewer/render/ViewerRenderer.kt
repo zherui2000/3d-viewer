@@ -7,16 +7,15 @@ import android.view.Surface
 import android.view.SurfaceView
 import com.google.android.filament.Box
 import com.google.android.filament.Camera
-import com.google.android.filament.ColorGrading
 import com.google.android.filament.Engine
 import com.google.android.filament.EntityManager
 import com.google.android.filament.IndexBuffer
+import com.google.android.filament.IndirectLight
 import com.google.android.filament.LightManager
 import com.google.android.filament.MaterialInstance
 import com.google.android.filament.RenderableManager
 import com.google.android.filament.Skybox
 import com.google.android.filament.SwapChain
-import com.google.android.filament.ToneMapper
 import com.google.android.filament.View
 import com.google.android.filament.Viewport
 import com.google.android.filament.android.DisplayHelper
@@ -78,7 +77,6 @@ class ViewerRenderer(context: Context) {
 
     private val materials: ViewerMaterials?
     private var modelMaterial: MaterialInstance? = null
-    private var evenMaterial: MaterialInstance? = null
     private var wireMaterial: MaterialInstance? = null
     private var edgeMaterial: MaterialInstance? = null
     private var gridMaterial: MaterialInstance? = null
@@ -128,19 +126,24 @@ class ViewerRenderer(context: Context) {
     private var lastSection: SectionState? = null
 
     /**
-     * The tone curve for the Shaded modes. Filament's default curve is filmic: it crushes
-     * darks and compresses brights into a shoulder. That suits the lit material, whose
-     * lights and exposure were tuned through it, but the Shaded material computes its
-     * final brightness itself, and most of that range landed in the shoulder. Measured on
-     * a Galaxy S25 Ultra, the darkest tenth of a part still showed at 125 out of 255 and
-     * the median at 191: white with little shade, however the lights were set. A linear
-     * curve hands the shader's values to the screen unchanged, which is how eDrawings draws.
+     * The Shaded modes' ambient fill: a uniform light from every direction, added to the
+     * same lit material and light rig Solid uses. Solid's lights leave faces turned away
+     * from them dark; this lifts every face by the same amount, so nothing falls into
+     * shadow while the key light, highlights, metallic and roughness all still shape the
+     * part exactly as they do in Solid.
+     *
+     * Several attempts first drew Shaded with a separate unlit material that computed its
+     * own lighting. However it was tuned it read as flat on the phone, it could not honour
+     * the metallic and roughness sliders, and it needed the view's tone curve swapped to
+     * reach the screen intact. Reusing the real material removes all of that.
+     *
+     * Only the constant spherical-harmonics band, so the fill has no direction of its own.
      */
-    private val linearGrading = ColorGrading.Builder()
-        .toneMapper(ToneMapper.Linear())
+    private val ambientFill: IndirectLight = IndirectLight.Builder()
+        .irradiance(1, floatArrayOf(1f, 1f, 1f))
+        .intensity(SHADED_AMBIENT_INTENSITY)
         .build(engine)
-    private val defaultGrading: ColorGrading? = view.colorGrading
-    private var linearGradingActive = false
+    private var ambientFillActive = false
 
     init {
         val compileStart = System.nanoTime()
@@ -221,23 +224,24 @@ class ViewerRenderer(context: Context) {
         gridMesh.destroy(engine)
 
         listOf(
-            modelMaterial, evenMaterial, wireMaterial, edgeMaterial, gridMaterial, planeMaterial,
+            modelMaterial, wireMaterial, edgeMaterial, gridMaterial, planeMaterial,
             markerAMaterial, markerBMaterial, lineMaterial,
         ).forEach { instance -> instance?.let { engine.destroyMaterialInstance(it) } }
 
         materials?.let {
             engine.destroyMaterial(it.model)
-            engine.destroyMaterial(it.even)
             engine.destroyMaterial(it.overlay)
             engine.destroyMaterial(it.translucent)
         }
 
         scene.setSkybox(null)
         engine.destroySkybox(skybox)
+        // Detached first: destroying a light the scene still points at frees it under it.
+        scene.indirectLight = null
+        engine.destroyIndirectLight(ambientFill)
 
         engine.destroyCameraComponent(cameraEntity)
         engine.destroyView(view)
-        engine.destroyColorGrading(linearGrading)
         engine.destroyScene(scene)
         engine.destroyRenderer(renderer)
 
@@ -420,41 +424,18 @@ class ViewerRenderer(context: Context) {
                 setParameter(ViewerMaterials.PARAM_METALLIC, appearance.metallic)
                 setParameter(ViewerMaterials.PARAM_ROUGHNESS, appearance.roughness)
             }
-            evenMaterial?.setParameter(ViewerMaterials.PARAM_BASE_COLOR, red, green, blue)
-
-            // One renderable, two looks: swapping its material instance is cheaper than a
-            // second entity sharing the same vertex buffer, and cannot drift out of sync.
-            if (hasModelRenderable) {
-                val instance = if (appearance.shading.evenlyLit) evenMaterial else modelMaterial
-                if (instance != null) {
-                    val renderables = engine.renderableManager
-                    renderables.setMaterialInstanceAt(renderables.getInstance(modelEntity), 0, instance)
-                }
-            }
         }
 
         setInScene(modelEntity, hasModelRenderable && appearance.shading.drawsSolid)
         setInScene(wireEntity, hasWireRenderable && appearance.shading.drawsWireframe)
         setInScene(edgeEntity, hasEdgeRenderable && appearance.shading.drawsFeatureEdges)
         setInScene(gridEntity, appearance.showGrid)
-        syncToneCurve(appearance.shading.evenlyLit)
-    }
 
-    /**
-     * Switches the tone curve with the display mode. The background and grid get colours
-     * matched to what the filmic curve shows them as, measured on screen, so the scene
-     * around the model does not jump when the mode changes; only the model's own shading
-     * changes.
-     */
-    private fun syncToneCurve(linear: Boolean) {
-        if (linear == linearGradingActive) return
-        linearGradingActive = linear
-        view.colorGrading = if (linear) linearGrading else defaultGrading
-
-        val background = if (linear) BACKGROUND_LINEAR_CURVE else BACKGROUND
-        skybox.setColor(background[0], background[1], background[2], 1f)
-        val grid = if (linear) GRID_COLOR_LINEAR_CURVE else GRID_COLOR
-        gridMaterial?.setParameter(ViewerMaterials.PARAM_BASE_COLOR, grid[0], grid[1], grid[2])
+        val fill = appearance.shading.evenlyLit
+        if (fill != ambientFillActive) {
+            ambientFillActive = fill
+            scene.indirectLight = if (fill) ambientFill else null
+        }
     }
 
     private fun syncSection(state: ViewerUiState) {
@@ -464,7 +445,7 @@ class ViewerRenderer(context: Context) {
 
             val plane = section.planeEquation()
             val enabled = if (section.enabled) 1f else 0f
-            for (instance in listOfNotNull(modelMaterial, evenMaterial, wireMaterial, edgeMaterial)) {
+            for (instance in listOfNotNull(modelMaterial, wireMaterial, edgeMaterial)) {
                 instance.setParameter(ViewerMaterials.PARAM_CLIP_PLANE, plane[0], plane[1], plane[2], plane[3])
                 instance.setParameter(ViewerMaterials.PARAM_CLIP_ENABLED, enabled)
             }
@@ -594,13 +575,6 @@ class ViewerRenderer(context: Context) {
             lightManager.getInstance(keyLightEntity),
             forward.x, forward.y, forward.z - 0.35f,
         )
-
-        // The Shaded modes' key light sits above and to the left of the viewer, like a
-        // desk lamp over the shoulder, and turns with the camera so the part is always
-        // modelled the same way from wherever it is seen. Expressed in world space,
-        // pointing towards the light, which is what the shader takes.
-        val key = (-forward + cameraState.up * KEY_UP - cameraState.right * KEY_LEFT).normalized()
-        evenMaterial?.setParameter(ViewerMaterials.PARAM_KEY_DIRECTION, key.x, key.y, key.z)
     }
 
     // ------------------------------------------------------------------ scene setup
@@ -643,12 +617,6 @@ class ViewerRenderer(context: Context) {
             setParameter(ViewerMaterials.PARAM_ROUGHNESS, 0.45f)
             setParameter(ViewerMaterials.PARAM_CLIP_PLANE, 1f, 0f, 0f, 0f)
             setParameter(ViewerMaterials.PARAM_CLIP_ENABLED, 0f)
-        }
-        evenMaterial = materials.even.createInstance().apply {
-            setParameter(ViewerMaterials.PARAM_BASE_COLOR, 0.76f, 0.79f, 0.84f)
-            setParameter(ViewerMaterials.PARAM_CLIP_PLANE, 1f, 0f, 0f, 0f)
-            setParameter(ViewerMaterials.PARAM_CLIP_ENABLED, 0f)
-            setParameter(ViewerMaterials.PARAM_KEY_DIRECTION, -0.35f, -0.6f, 0.7f)
         }
 
         // Only lines that lie on the model's surface are pulled towards the camera; the
@@ -760,11 +728,6 @@ class ViewerRenderer(context: Context) {
 
         val BACKGROUND = floatArrayOf(0.012f, 0.017f, 0.025f)
         val GRID_COLOR = floatArrayOf(0.055f, 0.075f, 0.10f)
-
-        // The same two colours for the linear curve: what the filmic curve shows them as,
-        // measured on screen as sRGB (14, 21, 29) and (53, 67, 83), converted back to linear.
-        val BACKGROUND_LINEAR_CURVE = floatArrayOf(0.0044f, 0.0073f, 0.0123f)
-        val GRID_COLOR_LINEAR_CURVE = floatArrayOf(0.0356f, 0.0561f, 0.0865f)
         val WIREFRAME_COLOR = floatArrayOf(0.18f, 0.45f, 0.70f)
 
         /** Near-black outlines, as a CAD viewer draws edges over a shaded part. */
@@ -777,9 +740,16 @@ class ViewerRenderer(context: Context) {
          */
         const val SURFACE_LINE_PULL = 0.001f
 
-        /** Where the Shaded modes' key light sits relative to the viewer. */
-        const val KEY_UP = 0.9f
-        const val KEY_LEFT = 0.6f
+        /**
+         * The Shaded modes' ambient fill, in the same units as the light rig below and
+         * seen through the same exposure. The key light gives a face it hits squarely
+         * colour x 95,000 / pi, about colour x 30,000; the fill gives every face colour x
+         * this value, since Filament's irradiance already includes the 1/pi. A third of
+         * the key: enough that no face reads as in shadow, not so much that the key light
+         * stops shaping the part.
+         */
+        const val SHADED_AMBIENT_INTENSITY = 10_000f
+
         val MARKER_A_COLOR = floatArrayOf(0.90f, 0.22f, 0.15f)
         val MARKER_B_COLOR = floatArrayOf(0.15f, 0.45f, 0.90f)
         val LINE_COLOR = floatArrayOf(1.0f, 0.62f, 0.08f)

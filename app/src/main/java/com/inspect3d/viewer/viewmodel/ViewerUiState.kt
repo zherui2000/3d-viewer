@@ -29,7 +29,10 @@ enum class ShadingMode(val label: String) {
     val drawsSolid: Boolean get() = this != WIREFRAME
     val drawsWireframe: Boolean get() = this == WIREFRAME || this == SOLID_WITH_MESH
 
-    /** The flat, shadow-free lighting of a CAD viewer instead of the lit material. */
+    /**
+     * Solid's lit material and lights, plus an even ambient fill so no face falls into
+     * shadow. Metallic and roughness apply exactly as in Solid.
+     */
     val evenlyLit: Boolean get() = this == SHADED || this == SHADED_WITH_EDGES
 
     /** Outlines where faces meet at a crease, and the open boundaries of the surface. */
