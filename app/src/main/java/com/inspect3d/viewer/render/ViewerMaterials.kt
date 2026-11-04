@@ -51,6 +51,12 @@ class ViewerMaterials private constructor(
         const val PARAM_CLIP_PLANE = "clipPlane"
         const val PARAM_CLIP_ENABLED = "clipEnabled"
 
+        /** World-space direction *towards* the Shaded mode's key light; set per frame. */
+        const val PARAM_KEY_DIRECTION = "keyDirection"
+
+        /** Fraction of the camera distance an overlay is drawn nearer the camera by. */
+        const val PARAM_PULL_TO_CAMERA = "pullToCamera"
+
         private const val CLIP_VARIABLE = "clipDistance"
 
         /** Shared vertex stage: signed distance to the section plane, in object space. */
@@ -59,6 +65,27 @@ class ViewerMaterials private constructor(
                 vec4 plane = materialParams.$PARAM_CLIP_PLANE;
                 float signedDistance = dot(getPosition().xyz, plane.xyz) + plane.w;
                 material.$CLIP_VARIABLE = vec4(signedDistance, 0.0, 0.0, 0.0);
+            }
+        """.trimIndent()
+
+        /**
+         * The overlay's vertex stage: the section-plane distance, plus a small pull towards
+         * the camera. Edge and wireframe lines lie exactly on the surface they outline, so
+         * the depth test between the two is a coin toss and the lines flicker. Moving the
+         * lines a fraction of the camera distance nearer settles it at any zoom.
+         *
+         * The earlier fix pushed the *surface* back with a polygon offset instead. Its
+         * slope term grows without bound on faces seen edge-on, which a dense organic
+         * model is full of, and it pushed those faces behind the grid, so the grid showed
+         * through the part. Moving the lines leaves the surface's depth alone.
+         */
+        private val OVERLAY_VERTEX_SHADER = """
+            void materialVertex(inout MaterialVertexInputs material) {
+                vec4 plane = materialParams.$PARAM_CLIP_PLANE;
+                float signedDistance = dot(getPosition().xyz, plane.xyz) + plane.w;
+                material.$CLIP_VARIABLE = vec4(signedDistance, 0.0, 0.0, 0.0);
+                vec3 toCamera = getWorldCameraPosition() - material.worldPosition.xyz;
+                material.worldPosition.xyz += toCamera * materialParams.$PARAM_PULL_TO_CAMERA;
             }
         """.trimIndent()
 
@@ -76,27 +103,48 @@ class ViewerMaterials private constructor(
         """.trimIndent()
 
         /**
-         * The CAD-viewer look: a headlight over a strong ambient term. Light always comes
-         * from the viewer's side, so no face can turn away from it into shadow, while the
-         * brightness still falls off with the angle to the eye enough for curvature and
-         * steps to read. Unlit rather than a re-rigged lit material so the result does
-         * not depend on light intensities, exposure or the metallic slider at all.
+         * The CAD-viewer look, as eDrawings shades a part: a key light from above and to
+         * the left of the viewer that models the shape, a headlight so nothing the viewer
+         * can see is left unlit, a soft highlight, and an ambient floor so no face falls
+         * into black. No shadows are cast. Unlit rather than a re-rigged lit material, so
+         * the result does not depend on light intensities, exposure or the metallic slider.
          *
-         * `abs()` because the material is double sided: once a section opens the part,
-         * the inside of the shell should read the same as the outside.
+         * The first version used a headlight over 62% ambient alone. That reads well on a
+         * box's flat faces, but on a curved, organic part nearly every face lands near full
+         * brightness and the shape washes out to white, so the key light carries the form.
+         *
+         * The normal is turned towards the viewer first: the material is double sided, and
+         * once a section opens the part, the inside of the shell must light like the outside.
          */
         private val EVEN_FRAGMENT_SHADER = """
             void material(inout MaterialInputs material) {
                 prepareMaterial(material);
                 float cut = step(0.0, variable_$CLIP_VARIABLE.x) * materialParams.$PARAM_CLIP_ENABLED;
-                float facing = abs(dot(getWorldGeometricNormalVector(), getWorldViewVector()));
-                float light = $EVEN_AMBIENT + (1.0 - $EVEN_AMBIENT) * facing;
-                material.baseColor = vec4(materialParams.$PARAM_BASE_COLOR * light, 1.0 - cut);
+
+                vec3 v = normalize(getWorldViewVector());
+                vec3 n = normalize(getWorldGeometricNormalVector());
+                n = dot(n, v) < 0.0 ? -n : n;
+                vec3 l = normalize(materialParams.$PARAM_KEY_DIRECTION);
+
+                float key = max(dot(n, l), 0.0);
+                float head = max(dot(n, v), 0.0);
+                float highlight = pow(max(dot(n, normalize(l + v)), 0.0), 48.0);
+
+                float light = $EVEN_AMBIENT + $EVEN_KEY * key + $EVEN_HEAD * head;
+                vec3 rgb = materialParams.$PARAM_BASE_COLOR * light + vec3($EVEN_HIGHLIGHT * highlight);
+                material.baseColor = vec4(rgb, 1.0 - cut);
             }
         """.trimIndent()
 
-        /** The floor of the even lighting: a face seen edge-on keeps this much colour. */
-        private const val EVEN_AMBIENT = "0.62"
+        // The floor is what a face turned away from the key light, seen edge-on, keeps:
+        // a dark grey, never black. A face lit squarely by both lights reaches about 1.08.
+        // Tuned on a Galaxy S25 Ultra against an organic 570 k-triangle part: with a 0.28
+        // floor and a key near the line of sight, nearly every face of a part seen from
+        // above sat at 90-100% and the shape still washed out.
+        private const val EVEN_AMBIENT = "0.18"
+        private const val EVEN_KEY = "0.72"
+        private const val EVEN_HEAD = "0.18"
+        private const val EVEN_HIGHLIGHT = "0.12"
 
         private val OVERLAY_FRAGMENT_SHADER = """
             void material(inout MaterialInputs material) {
@@ -180,6 +228,7 @@ class ViewerMaterials private constructor(
                     uniformParameter(MaterialBuilder.UniformType.FLOAT3, PARAM_BASE_COLOR)
                     uniformParameter(MaterialBuilder.UniformType.FLOAT4, PARAM_CLIP_PLANE)
                     uniformParameter(MaterialBuilder.UniformType.FLOAT, PARAM_CLIP_ENABLED)
+                    uniformParameter(MaterialBuilder.UniformType.FLOAT3, PARAM_KEY_DIRECTION)
                     materialVertex(CLIP_VERTEX_SHADER)
                     material(EVEN_FRAGMENT_SHADER)
                 }
@@ -194,7 +243,8 @@ class ViewerMaterials private constructor(
                     uniformParameter(MaterialBuilder.UniformType.FLOAT3, PARAM_BASE_COLOR)
                     uniformParameter(MaterialBuilder.UniformType.FLOAT4, PARAM_CLIP_PLANE)
                     uniformParameter(MaterialBuilder.UniformType.FLOAT, PARAM_CLIP_ENABLED)
-                    materialVertex(CLIP_VERTEX_SHADER)
+                    uniformParameter(MaterialBuilder.UniformType.FLOAT, PARAM_PULL_TO_CAMERA)
+                    materialVertex(OVERLAY_VERTEX_SHADER)
                     material(OVERLAY_FRAGMENT_SHADER)
                 }
 

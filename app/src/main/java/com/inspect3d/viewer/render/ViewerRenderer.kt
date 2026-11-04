@@ -558,6 +558,13 @@ class ViewerRenderer(context: Context) {
             lightManager.getInstance(keyLightEntity),
             forward.x, forward.y, forward.z - 0.35f,
         )
+
+        // The Shaded modes' key light sits above and to the left of the viewer, like a
+        // desk lamp over the shoulder, and turns with the camera so the part is always
+        // modelled the same way from wherever it is seen. Expressed in world space,
+        // pointing towards the light, which is what the shader takes.
+        val key = (-forward + cameraState.up * KEY_UP - cameraState.right * KEY_LEFT).normalized()
+        evenMaterial?.setParameter(ViewerMaterials.PARAM_KEY_DIRECTION, key.x, key.y, key.z)
     }
 
     // ------------------------------------------------------------------ scene setup
@@ -600,19 +607,18 @@ class ViewerRenderer(context: Context) {
             setParameter(ViewerMaterials.PARAM_ROUGHNESS, 0.45f)
             setParameter(ViewerMaterials.PARAM_CLIP_PLANE, 1f, 0f, 0f, 0f)
             setParameter(ViewerMaterials.PARAM_CLIP_ENABLED, 0f)
-            // Lines drawn exactly on a surface fight it for depth and flicker in and out.
-            // Pushing the faces back a hair lets wireframe and edge lines win cleanly.
-            setPolygonOffset(SURFACE_DEPTH_BIAS_SCALE, SURFACE_DEPTH_BIAS_CONSTANT)
         }
         evenMaterial = materials.even.createInstance().apply {
             setParameter(ViewerMaterials.PARAM_BASE_COLOR, 0.76f, 0.79f, 0.84f)
             setParameter(ViewerMaterials.PARAM_CLIP_PLANE, 1f, 0f, 0f, 0f)
             setParameter(ViewerMaterials.PARAM_CLIP_ENABLED, 0f)
-            setPolygonOffset(SURFACE_DEPTH_BIAS_SCALE, SURFACE_DEPTH_BIAS_CONSTANT)
+            setParameter(ViewerMaterials.PARAM_KEY_DIRECTION, -0.35f, -0.6f, 0.7f)
         }
 
-        wireMaterial = overlayInstance(materials, WIREFRAME_COLOR, clippable = true)
-        edgeMaterial = overlayInstance(materials, EDGE_COLOR, clippable = true)
+        // Only lines that lie on the model's surface are pulled towards the camera; the
+        // grid, markers and measurement line stay exactly where they are.
+        wireMaterial = overlayInstance(materials, WIREFRAME_COLOR, clippable = true, pull = SURFACE_LINE_PULL)
+        edgeMaterial = overlayInstance(materials, EDGE_COLOR, clippable = true, pull = SURFACE_LINE_PULL)
         gridMaterial = overlayInstance(materials, GRID_COLOR, clippable = false)
         markerAMaterial = overlayInstance(materials, MARKER_A_COLOR, clippable = false)
         markerBMaterial = overlayInstance(materials, MARKER_B_COLOR, clippable = false)
@@ -640,11 +646,13 @@ class ViewerRenderer(context: Context) {
         materials: ViewerMaterials,
         color: FloatArray,
         clippable: Boolean,
+        pull: Float = 0f,
     ): MaterialInstance = materials.overlay.createInstance().apply {
         setParameter(ViewerMaterials.PARAM_BASE_COLOR, color[0], color[1], color[2])
         // A plane that can never cut anything keeps the shader branch-free for overlays.
         setParameter(ViewerMaterials.PARAM_CLIP_PLANE, 0f, 1f, 0f, -1e6f)
         setParameter(ViewerMaterials.PARAM_CLIP_ENABLED, if (clippable) 1f else 0f)
+        setParameter(ViewerMaterials.PARAM_PULL_TO_CAMERA, pull)
     }
 
     private fun buildStatic(
@@ -721,9 +729,16 @@ class ViewerRenderer(context: Context) {
         /** Near-black outlines, as a CAD viewer draws edges over a shaded part. */
         val EDGE_COLOR = floatArrayOf(0.012f, 0.014f, 0.018f)
 
-        /** Depth bias on the model's faces so coincident lines draw over them. */
-        const val SURFACE_DEPTH_BIAS_SCALE = 1f
-        const val SURFACE_DEPTH_BIAS_CONSTANT = 1f
+        /**
+         * How far edge and wireframe lines are drawn nearer the camera, as a fraction of
+         * the camera distance: enough to win the depth test against the surface they lie
+         * on, small enough not to show through anything genuinely in front of them.
+         */
+        const val SURFACE_LINE_PULL = 0.001f
+
+        /** Where the Shaded modes' key light sits relative to the viewer. */
+        const val KEY_UP = 0.9f
+        const val KEY_LEFT = 0.6f
         val MARKER_A_COLOR = floatArrayOf(0.90f, 0.22f, 0.15f)
         val MARKER_B_COLOR = floatArrayOf(0.15f, 0.45f, 0.90f)
         val LINE_COLOR = floatArrayOf(1.0f, 0.62f, 0.08f)

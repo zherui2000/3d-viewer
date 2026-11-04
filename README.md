@@ -170,12 +170,25 @@ from the viewer are drawn first and dimmed.
 | Wireframe | every triangle edge, no surface |
 | Solid + mesh | the lit surface with every triangle edge, to show how the file was tessellated |
 
-"Shaded" is a dedicated unlit material: a headlight over strong ambient,
-`colour × (0.62 + 0.38 × |n·v|)`. Light always comes from the viewer's side, so no face can
-turn away from it into shadow, yet the brightness still varies with the angle to the eye,
-enough for curvature and steps to read. It is a material of its own rather than a
-re-rigged light setup so the look cannot drift with light intensities, exposure or the
-metallic slider.
+"Shaded" is a dedicated unlit material lit the way eDrawings lights a part:
+
+```
+colour × (0.18 + 0.72 × key + 0.18 × head) + 0.12 × highlight
+```
+
+* **key:** a light above and to the left of the viewer, about 50° off the line of sight.
+  It turns with the camera, so the part is modelled the same way from every angle.
+* **head:** a headlight, so nothing the viewer can see is left unlit.
+* **highlight:** a soft specular term.
+
+The 0.18 floor means no face ever goes black, and no shadows are cast. It is a material of
+its own rather than a re-rigged light setup, so the look cannot drift with light
+intensities, exposure or the metallic slider.
+
+The first version was a headlight over a 62 % floor alone. It read well on a box's flat
+faces, but on a curved, organic part, tested on a 570 k-triangle Fischer-Koch surface on a
+Galaxy S25 Ultra, nearly every face landed near full brightness and the shape washed out
+to white. The key light carries the form; the headlight only fills.
 
 The **edges** in "Shaded with edges" are *feature* edges (`FeatureEdges.kt`):
 
@@ -186,8 +199,14 @@ Vertices are welded by position first, since STL stores every triangle separatel
 nothing would share an edge otherwise. The result is the drawing-like outline a CAD viewer
 shows. A tessellated cylinder's facets meet at a few degrees and stay unmarked; its rim
 against a flat cap is a 90° crease and is outlined. Extraction runs on the loading thread
-in two flat hash tables and stops above 750 k triangles. The model's faces carry a small
-depth bias, so lines lying exactly on them draw cleanly instead of flickering.
+in two flat hash tables and stops above 750 k triangles.
+
+Lines lying exactly on a surface lose the depth test to it about half the time, and flicker.
+Edge and wireframe lines are therefore drawn **0.1 % of the camera distance nearer the
+camera**, which works at any zoom and leaves the surface's depth alone. The first attempt
+instead pushed the surface back with a polygon offset. That offset's slope term grows
+without bound on faces seen edge-on, which a dense organic model is full of, and it sent
+them behind the ground grid, so the grid showed through the part.
 
 ## How STEP import works
 
