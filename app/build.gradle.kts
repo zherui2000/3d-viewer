@@ -30,8 +30,8 @@ android {
         // Filament performs best on API 26+, and adaptive launcher icons require it.
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2.0-beta1"
+        versionCode = 4
+        versionName = "1.2.0-beta2"
 
         // On-device tests: the STEP bridge is native and can only be exercised there.
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

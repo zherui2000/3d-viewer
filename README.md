@@ -516,38 +516,50 @@ changing the bounds, and the box draws closed.
 
 `scratchpad/make_models.ps1` in the session's working files generates all three.
 
-### Open: a crash reported on one physical device
+### Solved: the crash on launch (Galaxy S25 Ultra, Adreno 830)
 
-The app was reported closing immediately on launch on a real phone. It has **not been
-reproduced** — it runs correctly on the emulator — and no crash log was ever captured, so
-the cause remains unknown. Ruled out: a missing native library (all four ABIs ship).
+The app closed immediately on launch on a Samsung Galaxy S25 Ultra (SM-S938B, Android 17,
+Snapdragon 8 Elite / Adreno 830, GPU driver 0800.64.8). It never reproduced on the
+emulator, and the in-app crash capture never fired. Both facts turned out to be clues: the
+crash was native, and specific to that GPU driver.
 
-Several changes since that report may have addressed it, but none is confirmed as the fix:
+The phone's own crash buffer (`adb logcat -b crash`) named it directly:
 
-* androidx `activity`/`lifecycle`/`core` were upgraded to match the 2026 Compose BOM; the
-  original pairing with 2024-era artifacts was an untested combination.
-* `Filament.init()` no longer takes the process down if the native library fails to load.
-* Engine creation is wrapped, so a driver rejection renders an error screen naming the
-  exception rather than vanishing.
-* The compiled material payload is copied into a *direct* `ByteBuffer` before being handed
-  to Filament, which reads payloads through the JNI direct-buffer address.
+```
+signal 6 (SIGABRT) … thread CompilerThreadP
+Abort message: 'terminating due to uncaught exception of type utils::PostconditionPanic
+  reason: OpenGL program InspectOverlay failed to link or compile'
+```
 
-**From `1.1.0-beta1` the app captures its own crashes**, which is the most useful thing it
-can do about this. `CrashLog` installs an uncaught-exception handler before Filament is
-touched, writes the trace to the app's storage on the way down — with the build, device,
-Android level and ABIs in the header — and shows it on the next launch in a dialog with a
-**Copy and dismiss** button. The handler chains to the system's afterwards, so the crash is
-still recorded normally rather than swallowed.
+and the driver's own compile log said why:
 
-Verified on the emulator end to end: `adb shell am crash com.inspect3d.viewer` produced a
-919-byte report, the process died properly, the next launch showed the dialog, dismissing it
-deleted the file, and a further relaunch was clean.
+```
+AdrenoGLES: WARNING: 0:3: extension 'GL_GOOGLE_cpp_style_line_directive' is not supported
+AdrenoGLES: ERROR: 0:822: GLSL compile error: malformed preprocessor directive
+```
 
-**One limit, which matters for this particular bug:** that handler sees *Java/Kotlin*
-exceptions only. A native abort (`SIGABRT`/`SIGSEGV`) inside Filament kills the process
-without passing through it, so if the beta still closes on that phone **and no dialog appears
-afterwards**, that absence is itself the diagnosis: it points at the native layer. Then only
-`adb logcat -b crash -d` will show the cause.
+The materials are compiled on the device by `filamat`, and they were built with
+`Optimization.NONE` to keep start-up quick. At that setting the GLSL handed to the driver
+still carries raw preprocessor blocks and `#line` markers that depend on
+`GL_GOOGLE_cpp_style_line_directive`. This Adreno driver does not support that extension,
+rejects the shader, and Filament treats a failed program link as fatal and aborts the process
+from its shader-compiler thread. It is not a Kotlin exception, so `CrashLog` never sees it.
+
+**The fix** (`1.2.0-beta2`) is `Optimization.PERFORMANCE`: the full round trip through
+SPIR-V, which emits plain, fully preprocessed GLSL. That is the same path Filament's offline
+compiler `matc` takes by default, so it is the output drivers are actually tested against.
+The cost is start-up time: compiling the four materials takes **855 ms** on the S25 Ultra,
+logged as `Materials compiled in … ms`.
+
+Verified on the phone: it launched in 1.46 s, the driver reported no shader errors, and the
+crash buffer stayed empty. Real files load too: two STLs of 683,952 and 382,152 triangles.
+
+Two lessons worth keeping:
+
+* An emulator's GPU is not a phone's. The emulator accepted the very GLSL the Adreno driver
+  rejected. Shader changes need checking on real hardware, ideally Adreno and Mali both.
+* No crash dialog was itself diagnostic: it meant a native abort, and the answer was in
+  `adb logcat -b crash`. The phone kept the record of the first crashes for two days.
 
 ### Rough edges
 

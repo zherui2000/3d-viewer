@@ -1,6 +1,7 @@
 package com.inspect3d.viewer.render
 
 import android.content.Context
+import android.util.Log
 import android.view.Choreographer
 import android.view.Surface
 import android.view.SurfaceView
@@ -125,7 +126,11 @@ class ViewerRenderer(context: Context) {
     private var lastSection: SectionState? = null
 
     init {
+        val compileStart = System.nanoTime()
         val compiled = runCatching { ViewerMaterials.create(engine) }
+        // Runs on the main thread during the first composition, so its cost is worth
+        // seeing: the full shader optimiser is slower than the pass-through it replaced.
+        Log.i(TAG, "Materials compiled in ${(System.nanoTime() - compileStart) / 1_000_000} ms")
         materials = compiled.getOrNull()
         initializationError = compiled.exceptionOrNull()?.let {
             "The viewer's shaders could not be compiled on this device (${it.message})."
@@ -703,6 +708,8 @@ class ViewerRenderer(context: Context) {
     }
 
     private companion object {
+        const val TAG = "Inspect3D"
+
         /** sRGB -> linear, which is the space Filament's material parameters live in. */
         fun toLinear(channel: Float): Float =
             if (channel <= 0.04045f) channel / 12.92f else ((channel + 0.055f) / 1.055f).pow(2.4f)

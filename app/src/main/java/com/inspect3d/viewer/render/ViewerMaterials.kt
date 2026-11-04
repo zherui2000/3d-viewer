@@ -143,8 +143,9 @@ class ViewerMaterials private constructor(
         """.trimIndent()
 
         /**
-         * Compiles and uploads the materials. Takes on the order of a hundred milliseconds
-         * on first run, so call it while the "loading" state is already on screen.
+         * Compiles and uploads the materials. With the full optimiser this takes most of a
+         * second (855 ms measured on a Galaxy S25 Ultra), so call it while the "loading"
+         * state is already on screen.
          *
          * @throws IllegalStateException if a shader fails to compile, which can only
          *   happen if the shader sources above are edited into something invalid.
@@ -225,9 +226,15 @@ class ViewerMaterials private constructor(
                 .name(name)
                 .platform(MaterialBuilder.Platform.MOBILE)
                 .targetApi(MaterialBuilder.TargetApi.OPENGL)
-                // NONE keeps start-up fast: the GLSL is passed through without running the
-                // SPIR-V optimiser, which is what we want for four small shaders.
-                .optimization(MaterialBuilder.Optimization.NONE)
+                // PERFORMANCE, not NONE. With NONE the GLSL handed to the driver still
+                // carries raw preprocessor blocks and `#line` markers that rely on the
+                // GL_GOOGLE_cpp_style_line_directive extension. The Adreno 830 driver in
+                // the Galaxy S25 (0800.64.8) does not support it, rejects the shader as
+                // "malformed preprocessor directive", and Filament aborts the process
+                // when a program fails to link: that was the crash on launch. The full
+                // optimiser round-trips through SPIR-V and emits plain, preprocessed GLSL,
+                // the same path Filament's offline compiler `matc` uses by default.
+                .optimization(MaterialBuilder.Optimization.PERFORMANCE)
             builder.configure()
 
             val result = builder.build()
