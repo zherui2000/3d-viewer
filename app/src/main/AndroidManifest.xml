@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-feature
         android:glEsVersion="0x00030000"
@@ -28,14 +29,88 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Allow the app to be offered as a handler when the user opens a model
-                 from a file manager or a cloud drive. -->
+            <!-- Offered under "Open with" for a model opened from a file manager, a
+                 download or a cloud drive, and so selectable there as the default.
+
+                 By type: every MIME type these formats are commonly labelled with. The
+                 model/* family covers the registered ones (model/stl, model/obj,
+                 model/3mf, model/gltf+json, model/gltf-binary, model/step); the rest are
+                 older or vendor labels still in wide use. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="model/*" />
-                <!-- STEP is registered as application/step as often as model/step. -->
+                <data android:mimeType="application/sla" />
+                <data android:mimeType="application/vnd.ms-pki.stl" />
+                <data android:mimeType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml" />
                 <data android:mimeType="application/step" />
+                <data android:mimeType="application/stp" />
+                <data android:mimeType="application/x-step" />
+            </intent-filter>
+
+            <!-- By extension: many file managers label STL, OBJ, 3MF and STEP files as
+                 generic application/octet-stream or text/plain. Registering for those
+                 types outright would offer the app for every unknown file, and a user who
+                 tapped "Always" would make it the default for all of them. Matching the
+                 extension instead keeps "Always" to that one kind of file. It needs a URI
+                 that carries the file name, which file managers' content URIs and file
+                 URIs do.
+
+                 pathSuffix (Android 12+) is exact. pathPattern is the fallback for older
+                 releases; its second form handles a dot earlier in the path, which the
+                 platform's simple matcher otherwise trips over. Both are case-sensitive,
+                 hence the upper-case entries: CAD tools commonly write .STL and .STEP. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+
+                <data android:pathSuffix=".stl" tools:targetApi="31" />
+                <data android:pathSuffix=".STL" tools:targetApi="31" />
+                <data android:pathSuffix=".obj" tools:targetApi="31" />
+                <data android:pathSuffix=".OBJ" tools:targetApi="31" />
+                <data android:pathSuffix=".3mf" tools:targetApi="31" />
+                <data android:pathSuffix=".3MF" tools:targetApi="31" />
+                <data android:pathSuffix=".gltf" tools:targetApi="31" />
+                <data android:pathSuffix=".GLTF" tools:targetApi="31" />
+                <data android:pathSuffix=".glb" tools:targetApi="31" />
+                <data android:pathSuffix=".GLB" tools:targetApi="31" />
+                <data android:pathSuffix=".step" tools:targetApi="31" />
+                <data android:pathSuffix=".STEP" tools:targetApi="31" />
+                <data android:pathSuffix=".stp" tools:targetApi="31" />
+                <data android:pathSuffix=".STP" tools:targetApi="31" />
+
+                <data android:pathPattern=".*\\.stl" />
+                <data android:pathPattern=".*\\..*\\.stl" />
+                <data android:pathPattern=".*\\.STL" />
+                <data android:pathPattern=".*\\..*\\.STL" />
+                <data android:pathPattern=".*\\.obj" />
+                <data android:pathPattern=".*\\..*\\.obj" />
+                <data android:pathPattern=".*\\.OBJ" />
+                <data android:pathPattern=".*\\..*\\.OBJ" />
+                <data android:pathPattern=".*\\.3mf" />
+                <data android:pathPattern=".*\\..*\\.3mf" />
+                <data android:pathPattern=".*\\.3MF" />
+                <data android:pathPattern=".*\\..*\\.3MF" />
+                <data android:pathPattern=".*\\.gltf" />
+                <data android:pathPattern=".*\\..*\\.gltf" />
+                <data android:pathPattern=".*\\.GLTF" />
+                <data android:pathPattern=".*\\..*\\.GLTF" />
+                <data android:pathPattern=".*\\.glb" />
+                <data android:pathPattern=".*\\..*\\.glb" />
+                <data android:pathPattern=".*\\.GLB" />
+                <data android:pathPattern=".*\\..*\\.GLB" />
+                <data android:pathPattern=".*\\.step" />
+                <data android:pathPattern=".*\\..*\\.step" />
+                <data android:pathPattern=".*\\.STEP" />
+                <data android:pathPattern=".*\\..*\\.STEP" />
+                <data android:pathPattern=".*\\.stp" />
+                <data android:pathPattern=".*\\..*\\.stp" />
+                <data android:pathPattern=".*\\.STP" />
+                <data android:pathPattern=".*\\..*\\.STP" />
             </intent-filter>
         </activity>
     </application>

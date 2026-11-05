@@ -274,6 +274,32 @@ The BVH is built on the loading thread, so the first tap is already fast.
 All four live in one `awaitEachGesture` loop (`ViewportGestures.kt`) rather than stacked
 detectors, which is what avoids tap and transform detectors eating each other's events.
 
+## Opening files from other apps
+
+The app registers for `VIEW` intents, so a file manager, the Downloads app or a cloud
+drive offers it under **Open with**, and **Always** makes it the default. Two filters
+(`AndroidManifest.xml`) do the matching:
+
+* **By type:** `model/*` (the registered `model/stl`, `model/obj`, `model/3mf`,
+  `model/gltf+json`, `model/gltf-binary`, `model/step`), plus the older or vendor labels
+  still in wide use: `application/sla`, `application/vnd.ms-pki.stl`,
+  `application/vnd.ms-package.3dmanufacturing-3dmodel+xml`, `application/step`,
+  `application/stp`, `application/x-step`.
+* **By extension:** `.stl .obj .3mf .gltf .glb .step .stp`, in lower and upper case,
+  whatever the type. File managers commonly label these as `application/octet-stream` or
+  `text/plain`. It needs a URI that carries the file name, which file managers' URIs do.
+  `pathSuffix` matches on Android 12+; `pathPattern` is the fallback before that.
+
+The app deliberately does **not** register for `application/octet-stream` or `text/plain`
+as such. It would then be offered for every unknown binary or text file, and a user who
+tapped **Always** on one would make it the default for all of them. Matched by extension,
+**Always** stays scoped to that one kind of file.
+
+Checked on the emulator against the package manager's own resolution
+(`cmd package query-activities`): offered for all 13 model cases, including STEP and STL
+labelled as generic binary, OBJ labelled as text and dotted file names. Not offered for
+plain text, a photo, JSON or an unknown binary (18 of 18).
+
 ## Format support and known limits
 
 | Format | Covered | Not covered |
